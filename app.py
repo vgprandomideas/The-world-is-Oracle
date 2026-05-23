@@ -1,261 +1,406 @@
 """
-World-as-Oracle REST API — Production version with SQLite persistence.
-Guruprasad Venkatakrishnan — Verslan / predictmarkets.finance / verslan.xyz
+World-as-Oracle — Streamlit Dashboard
+Guruprasad Venkatakrishnan (2026)
+Verslan / predictmarkets.finance / verslan.xyz
 """
 
-import time, os
-from typing import Optional, List
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
-
+import time
+import streamlit as st
+from datetime import datetime, date
 from oracle import WorldOracle, EventCategory
-from oracle.models import SourceTier, Article
 from oracle.impact_scorer import create_article_from_dict
+from oracle.models import OracleState
 from db import (init_db, save_event, get_event, get_all_events,
                 save_article, get_articles, save_history_snapshot,
                 get_history, save_resolution, event_exists)
 
-# ── In-memory oracle cache (rebuilt from DB on startup) ───────────────────
-_oracle_cache: dict = {}
+# ── Page config ────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="World-as-Oracle",
+    page_icon="⬡",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #1a1a2e, #16213e);
+        padding: 20px; border-radius: 10px; margin-bottom: 20px;
+        border: 1px solid #f0b42944;
+    }
+    .prob-card {
+        background: linear-gradient(135deg, #0d1117, #161b22);
+        border: 2px solid #f0b429; border-radius: 12px;
+        padding: 30px; text-align: center;
+    }
+    .prob-number { font-size: 80px; font-weight: 800;
+                   background: linear-gradient(135deg, #f0b429, #ff6b35);
+                   -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .state-pill { display: inline-block; padding: 4px 14px; border-radius: 20px;
+                  font-size: 13px; font-weight: 600; letter-spacing: 0.5px; }
+    .metric-box { background: #0d1117; border: 1px solid #30363d;
+                  border-radius: 8px; padding: 16px; text-align: center; }
+</style>
+""", unsafe_allow_html=True)
 
-def _rebuild_oracle_from_db(event_id: str) -> WorldOracle:
-    """Reconstruct a WorldOracle from persisted DB state."""
-    ev = get_event(event_id)
-    if not ev:
-        raise KeyError(f"Event {event_id} not in DB")
+# ── Init DB ────────────────────────────────────────────────────────────────
+init_db()
 
-    cat_map = {c.value: c for c in EventCategory}
-    oracle = WorldOracle(
-        event_id=event_id,
-        event_description=ev["description"],
-        resolution_criteria=ev["resolution"],
-        category=cat_map.get(ev["category"], EventCategory.CORPORATE_LEGAL),
-        platt_a=ev.get("platt_a", 1.0),
-        platt_b=ev.get("platt_b", 0.0),
+# ── API Key notice (optional) ──────────────────────────────────────────────
+import os
+if not os.getenv("ANTHROPIC_API_KEY"):
+    st.info(
+        "**Auto-scoring is off** — no ANTHROPIC_API_KEY set. "
+        "You can still use the oracle: just set **Raw Impact** and **Direction** manually when ingesting articles. "
+        "The temporal filter, probability engine, and all math runs without any API key.",
+        icon="ℹ️"
     )
-    oracle._prior = ev["prior"]
 
-    # Reload articles
-    rows = get_articles(event_id)
-    tier_map = {i: SourceTier(i) for i in range(1, 7)}
-    for row in rows:
-        a = Article(
-            article_id=row["article_id"],
-            source_name=row["source_name"],
-            tier=tier_map.get(row["tier"], SourceTier.TIER4_WIRE),
-            publication_time=row["publication_time"],
-            headline=row["headline"],
-            content_summary=row.get("content_summary", ""),
-            url=row.get("url", ""),
-            raw_impact=row.get("raw_impact", 0.0),
-            direction=row.get("direction", 0),
-            independence_score=row.get("independence_score", 0.0),
-            reasoning_chain=row.get("reasoning_chain", ""),
-        )
-        oracle._articles.append(a)
-
-    return oracle
-
+# ── Oracle cache ───────────────────────────────────────────────────────────
+if "oracles" not in st.session_state:
+    st.session_state.oracles = {}
 
 def get_oracle(event_id: str) -> WorldOracle:
-    """Get from cache or rebuild from DB."""
-    if event_id not in _oracle_cache:
-        if not event_exists(event_id):
-            raise HTTPException(404, f"Event '{event_id}' not found")
-        _oracle_cache[event_id] = _rebuild_oracle_from_db(event_id)
-    return _oracle_cache[event_id]
+    if event_id not in st.session_state.oracles:
+        ev = get_event(event_id)
+        if not ev:
+            st.error(f"Event {event_id} not found")
+            st.stop()
+        from oracle.models import SourceTier, Article
+        from oracle.config import CATEGORY_CONFIGS
+        cat_map = {c.value: c for c in EventCategory}
+        oracle = WorldOracle(
+            event_id=event_id,
+            event_description=ev["description"],
+            resolution_criteria=ev["resolution"],
+            category=cat_map.get(ev["category"], EventCategory.CORPORATE_LEGAL),
+        )
+        oracle._prior = ev["prior"]
+        tier_map = {i: SourceTier(i) for i in range(1, 7)}
+        for row in get_articles(event_id):
+            a = Article(
+                article_id=row["article_id"], source_name=row["source_name"],
+                tier=tier_map.get(row["tier"], SourceTier.TIER4_WIRE),
+                publication_time=row["publication_time"], headline=row["headline"],
+                content_summary=row.get("content_summary", ""),
+                raw_impact=row.get("raw_impact", 0.0), direction=row.get("direction", 0),
+                independence_score=row.get("independence_score", 0.0),
+                reasoning_chain=row.get("reasoning_chain", ""),
+            )
+            oracle._articles.append(a)
+        st.session_state.oracles[event_id] = oracle
+    return st.session_state.oracles[event_id]
 
+# ── State colours ──────────────────────────────────────────────────────────
+STATE_COLORS = {
+    "BASELINE":            ("#6e7681", "#21262d"),
+    "SHOCK_ACTIVE":        ("#f0b429", "#3d1f00"),
+    "BUILDING":            ("#3fb950", "#1f3d00"),
+    "SUSTAINED":           ("#39d353", "#003d1f"),
+    "CONTESTED":           ("#f85149", "#3d0000"),
+    "INSUFFICIENT_SIGNAL": ("#6e7681", "#161b22"),
+}
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """On startup: init DB and warm oracle cache for all events."""
-    init_db()
-    for ev in get_all_events():
-        try:
-            _oracle_cache[ev["event_id"]] = _rebuild_oracle_from_db(ev["event_id"])
-        except Exception as e:
-            print(f"Could not rebuild oracle for {ev['event_id']}: {e}")
-    print(f"Oracle cache warmed: {len(_oracle_cache)} events loaded")
-    yield
+def state_badge(state: str) -> str:
+    fg, bg = STATE_COLORS.get(state, ("#8b949e", "#21262d"))
+    return f'<span style="background:{bg};color:{fg};padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600;">{state}</span>'
 
+# ── Header ─────────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="main-header">
+  <h1 style="color:#f0b429;margin:0;">⬡ World-as-Oracle</h1>
+  <p style="color:#8b949e;margin:4px 0 0 0;">
+    Adversarial-Resistant AI Probability Estimation for Event-Driven Financial Instruments<br>
+    <small>Guruprasad Venkatakrishnan (2026) · Verslan · predictmarkets.finance · verslan.xyz</small>
+  </p>
+</div>
+""", unsafe_allow_html=True)
 
-app = FastAPI(title="World-as-Oracle API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# ── Sidebar: Event Management ──────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### ⬡ Events")
 
+    events = get_all_events()
+    event_ids = [e["event_id"] for e in events]
 
-# ── Pydantic models ────────────────────────────────────────────────────────
+    if not event_ids:
+        st.info("No events yet. Create one below.")
+        selected_event = None
+    else:
+        selected_event = st.selectbox("Select Event", event_ids)
 
-class CreateEventRequest(BaseModel):
-    event_id: str
-    event_description: str
-    resolution_criteria: str
-    category: str = "corporate_legal"
-    historical_base_rate: float = 0.20
-    structural_prior: float = 0.20
-    market_implied_prior: Optional[float] = None
+    st.divider()
 
-class ArticleRequest(BaseModel):
-    article_id: str
-    source_name: str
-    tier: int = 4
-    publication_time: Optional[float] = None
-    headline: str
-    content_summary: str = ""
-    url: str = ""
-    raw_impact: float = 0.0
-    direction: int = 0
-    reasoning_chain: str = ""
+    with st.expander("➕ Create New Event", expanded=not bool(event_ids)):
+        with st.form("create_event_form"):
+            new_id = st.text_input("Event ID", placeholder="fed_rate_jun2023")
+            new_desc = st.text_area("Description", placeholder="Federal Reserve raises rates at June 14 2023 FOMC", height=80)
+            new_res = st.text_area("Resolution Criteria", placeholder="Fed funds rate increases by 25bps or more", height=80)
+            new_cat = st.selectbox("Category", [
+                "central_bank", "corporate_legal", "geopolitical",
+                "electoral", "macro_data", "sovereign_credit", "crypto_protocol"
+            ])
+            col1, col2, col3 = st.columns(3)
+            with col1: hist_rate = st.number_input("Hist. Base Rate", 0.0, 1.0, 0.15, 0.01)
+            with col2: struct_prior = st.number_input("Structural Prior", 0.0, 1.0, 0.20, 0.01)
+            with col3: mkt_prior = st.number_input("Market Prior", 0.0, 1.0, 0.0, 0.01)
 
-class ResolveRequest(BaseModel):
-    outcome: int
+            if st.form_submit_button("Create Event", type="primary"):
+                if not new_id or not new_desc:
+                    st.error("Event ID and description required")
+                elif event_exists(new_id):
+                    st.error(f"Event '{new_id}' already exists")
+                else:
+                    cat_map = {c.value: c for c in EventCategory}
+                    category = cat_map.get(new_cat, EventCategory.CORPORATE_LEGAL)
+                    oracle = WorldOracle(
+                        event_id=new_id, event_description=new_desc,
+                        resolution_criteria=new_res, category=category,
+                    )
+                    mkt = mkt_prior if mkt_prior > 0 else None
+                    oracle.set_prior(hist_rate, struct_prior, mkt)
+                    save_event(new_id, new_desc, new_res, new_cat, oracle._prior,
+                               hist_rate, struct_prior, mkt)
+                    st.session_state.oracles[new_id] = oracle
+                    st.success(f"✓ Created '{new_id}' — Prior: {oracle._prior:.1%}")
+                    st.rerun()
 
+# ── Main area ──────────────────────────────────────────────────────────────
+if not selected_event:
+    st.markdown("### ← Create your first event in the sidebar")
+    st.stop()
 
-# ── API Routes ─────────────────────────────────────────────────────────────
+oracle = get_oracle(selected_event)
+ev_info = get_event(selected_event)
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "version": "1.0.0",
-            "active_events": len(_oracle_cache),
-            "affiliation": "Verslan / predictmarkets.finance / verslan.xyz"}
+# Event info bar
+st.markdown(f"**{ev_info['description']}**")
+st.caption(f"Category: `{ev_info['category']}` · Resolution: _{ev_info['resolution']}_")
+st.divider()
 
+tab_oracle, tab_ingest, tab_history, tab_resolve = st.tabs([
+    "📊 Oracle Output", "📥 Ingest Article", "📈 History", "✅ Resolve"
+])
 
-@app.get("/events")
-def list_events():
-    result = []
-    for ev in get_all_events():
-        try:
-            oracle = get_oracle(ev["event_id"])
+# ── TAB 1: Oracle Output ───────────────────────────────────────────────────
+with tab_oracle:
+    out = oracle.compute()
+    p = out.probability
+
+    col_prob, col_meta = st.columns([1, 2])
+
+    with col_prob:
+        st.markdown(f"""
+        <div class="prob-card">
+          <div class="prob-number">{p:.0%}</div>
+          <div style="color:#8b949e;font-size:14px;margin:8px 0;">P(Event Resolves YES)</div>
+          {state_badge(out.state.value)}
+          <div style="color:#8b949e;font-size:12px;margin-top:12px;">
+            CI: [{out.ci_lower:.1%}, {out.ci_upper:.1%}]
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_meta:
+        st.markdown("#### Signal Decomposition")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Prior P₀", f"{out.prior:.1%}", help="α·H(E) + β·S(E) + γ·M(E)")
+        with c2:
+            delta_shock = out.fast_shock * 100
+            st.metric("Fast Shock F(t)", f"{out.fast_shock:+.3f}",
+                      delta=f"{delta_shock:+.1f}pp",
+                      delta_color="normal" if delta_shock >= 0 else "inverse",
+                      help="Exponentially decaying. Capped at ±F_max=20%")
+        with c3:
+            delta_p = out.persistent_signal * 100
+            st.metric("Persistent P(t)", f"{out.persistent_signal:+.3f}",
+                      delta=f"{delta_p:+.1f}pp",
+                      delta_color="normal" if delta_p >= 0 else "inverse",
+                      help=f"Threshold-gated. Requires ρ_min={oracle.config.rho_min} independent sources")
+
+        st.markdown("#### Source Intelligence")
+        c4, c5, c6 = st.columns(3)
+        with c4:
+            st.metric("Independent Sources", out.independent_source_count,
+                      help=f"Qualifying sources with ι(a_i) ≥ {oracle.config.theta_ind}")
+        with c5:
+            st.metric("Total Articles", out.total_articles_processed)
+        with c6:
+            st.metric("ρ_min Required", oracle.config.rho_min,
+                      help="Min independent sources to activate persistent signal")
+
+        # Confidence interval bar
+        st.markdown("**Confidence Interval**")
+        ci_pct = int((out.ci_upper - out.ci_lower) * 100)
+        lo_pct = int(out.ci_lower * 100)
+        st.progress(min(out.ci_upper, 1.0), text=f"[{out.ci_lower:.1%} → {out.ci_upper:.1%}]  width={ci_pct}pp")
+
+    # Audit trail
+    if out.audit_trail:
+        st.markdown("#### Qualifying Sources (Audit Trail)")
+        for a in out.audit_trail:
+            direction_icon = "🔴" if a.get("signed_impact", 0) < 0 else "🟢"
+            with st.expander(f"{direction_icon} Tier {a['tier']} · {a['source']} · impact={a.get('signed_impact', '?')}"):
+                st.write(f"**Independence score:** {a.get('independence_score', 0):.3f}")
+                if a.get("reasoning"):
+                    st.write(f"**Reasoning:** {a['reasoning']}")
+    else:
+        st.info("No qualifying sources yet. Ingest articles with independence ≥ θ_ind=0.40 and |impact| ≥ θ_imp=3.0")
+
+    if st.button("↻ Refresh", key="refresh_btn"):
+        st.rerun()
+
+# ── TAB 2: Ingest Article ──────────────────────────────────────────────────
+with tab_ingest:
+    st.markdown("### Ingest Article or Signal")
+
+    with st.form("ingest_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            art_id = st.text_input("Article ID", value=f"art_{int(time.time())}")
+            source = st.text_input("Source Name", placeholder="Bloomberg / DOJ Filing / Reuters")
+            tier = st.selectbox("Source Tier", options=[1, 2, 3, 4, 5, 6],
+                                format_func=lambda x: {
+                                    1: "Tier 1 — Court filing, regulatory order, central bank statement",
+                                    2: "Tier 2 — Local financial press (ET, Business Standard)",
+                                    3: "Tier 3 — Regional international (FT, Nikkei Asia)",
+                                    4: "Tier 4 — International wire (Bloomberg, Reuters)",
+                                    5: "Tier 5 — Capital flow signal (FII, CDS, bond yield)",
+                                    6: "Tier 6 — Unverified / social media",
+                                }[x], index=3)
+            pub_date = st.date_input("Publication Date", value=date.today())
+
+        with col2:
+            raw_impact = st.slider("Raw Impact (1–10)", 1.0, 10.0, 5.0, 0.5,
+                                   help="How strongly does this article move the probability?")
+            direction = st.radio("Direction", options=[1, 0, -1],
+                                 format_func=lambda x: {
+                                     1: "🔴 +1 (Increases probability)",
+                                     0: "⚪ 0 (Neutral / informational)",
+                                     -1: "🟢 -1 (Decreases probability)"
+                                 }[x], index=0)
+            url = st.text_input("URL (optional)", placeholder="https://bloomberg.com/...")
+
+        headline = st.text_input("Headline *", placeholder="DOJ Files Criminal Charges Against...")
+        content = st.text_area("Content Summary", placeholder="Brief summary of the key claims in this article...", height=100)
+        reasoning = st.text_input("Reasoning (optional)", placeholder="Why does this article impact the probability?")
+
+        submitted = st.form_submit_button("⬡ Ingest Article", type="primary")
+
+    if submitted:
+        if not source or not headline:
+            st.error("Source name and headline are required")
+        else:
+            pub_time = datetime.combine(pub_date, datetime.min.time()).timestamp()
+            data = {
+                "article_id": art_id, "source_name": source, "tier": tier,
+                "publication_time": pub_time, "headline": headline,
+                "content_summary": content, "url": url,
+                "raw_impact": raw_impact, "direction": direction,
+                "reasoning_chain": reasoning,
+            }
+            article = create_article_from_dict(data)
+            oracle.ingest_articles([article], auto_score_independence=True, auto_score_impact=False)
+            save_article(selected_event, oracle._articles[-1])
+
             out = oracle.compute()
-            result.append({
-                "event_id": ev["event_id"],
-                "description": ev["description"],
-                "category": ev["category"],
-                "probability": round(out.probability, 4),
-                "state": out.state.value,
-                "articles_processed": out.total_articles_processed,
-                "resolved": ev.get("outcome") is not None,
-            })
-        except Exception:
-            result.append({"event_id": ev["event_id"], "error": "compute failed"})
-    return {"events": result, "count": len(result)}
+            snapshot = {
+                "timestamp": time.time(), "probability": round(out.probability, 4),
+                "state": out.state.value, "fast_shock": round(out.fast_shock, 4),
+                "persistent_signal": round(out.persistent_signal, 4),
+                "independent_sources": out.independent_source_count,
+            }
+            save_history_snapshot(selected_event, snapshot)
 
+            inde_score = oracle._articles[-1].independence_score
+            st.success(f"""
+            ✓ Ingested successfully
+            - **Independence score:** {inde_score:.3f} {'✓ Qualifies' if inde_score >= oracle.config.theta_ind else '✗ Below θ_ind — derivative source'}
+            - **Signed impact:** {oracle._articles[-1].signed_impact:+.2f}
+            - **New probability:** {out.probability:.1%} [{out.state.value}]
+            """)
 
-@app.post("/events")
-def create_event(req: CreateEventRequest):
-    if event_exists(req.event_id):
-        raise HTTPException(400, f"Event '{req.event_id}' already exists")
+# ── TAB 3: History ─────────────────────────────────────────────────────────
+with tab_history:
+    history = get_history(selected_event)
 
-    cat_map = {c.value: c for c in EventCategory}
-    category = cat_map.get(req.category, EventCategory.CORPORATE_LEGAL)
+    if not history:
+        st.info("No history yet. Ingest articles to build probability history.")
+    else:
+        import pandas as pd
 
-    oracle = WorldOracle(
-        event_id=req.event_id,
-        event_description=req.event_description,
-        resolution_criteria=req.resolution_criteria,
-        category=category,
-    )
-    oracle.set_prior(req.historical_base_rate, req.structural_prior, req.market_implied_prior)
+        df = pd.DataFrame(history)
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
+        df["probability_pct"] = df["probability"] * 100
 
-    save_event(
-        req.event_id, req.event_description, req.resolution_criteria,
-        category.value, oracle._prior,
-        req.historical_base_rate, req.structural_prior, req.market_implied_prior,
-    )
-    _oracle_cache[req.event_id] = oracle
+        st.markdown("#### Probability Over Time")
+        st.line_chart(df.set_index("datetime")["probability_pct"],
+                      use_container_width=True, height=280,
+                      color="#f0b429")
 
-    return {"event_id": req.event_id, "prior": round(oracle._prior, 4),
-            "category": category.value, "status": "created"}
+        st.markdown("#### Signal Decomposition Over Time")
+        decomp_cols = [c for c in ["fast_shock", "persistent_signal"] if c in df.columns]
+        if decomp_cols:
+            st.line_chart(df.set_index("datetime")[decomp_cols],
+                          use_container_width=True, height=200)
 
+        st.markdown("#### History Table")
+        display_df = df[["datetime", "probability_pct", "state",
+                          "fast_shock", "persistent_signal", "independent_sources"]].copy()
+        display_df.columns = ["Datetime", "P(%) ", "State", "Fast Shock", "Persistent", "Sources"]
+        display_df = display_df.sort_values("Datetime", ascending=False)
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-@app.post("/events/{event_id}/articles")
-def ingest_articles(event_id: str, articles: List[ArticleRequest]):
-    oracle = get_oracle(event_id)
-    ingested = []
+# ── TAB 4: Resolve ─────────────────────────────────────────────────────────
+with tab_resolve:
+    st.markdown("### Resolve Event")
+    st.warning("⚠️ Resolving records the actual outcome and computes Brier Score. This cannot be undone.")
 
-    for req in articles:
-        data = req.model_dump()
-        if data["publication_time"] is None:
-            data["publication_time"] = time.time()
-        article = create_article_from_dict(data)
-        ingested.append(article)
+    if ev_info.get("outcome") is not None:
+        outcome_label = "YES ✓" if ev_info["outcome"] == 1 else "NO ✗"
+        st.success(f"This event has already been resolved: **{outcome_label}**")
+    else:
+        out = oracle.compute()
+        st.markdown(f"**Current oracle probability:** {out.probability:.1%}")
+        st.markdown(f"**State:** {out.state.value}")
 
-    oracle.ingest_articles(ingested, auto_score_independence=True, auto_score_impact=False)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Resolve YES (Event Happened)", type="primary", use_container_width=True):
+                oracle.record_resolution(1)
+                report = oracle.calibration_report()
+                save_resolution(selected_event, 1, out.probability, report.get("overall_brier_score"))
+                bs = report.get("overall_brier_score")
+                st.success(f"Resolved YES. Brier Score: {bs:.4f}" if bs else "Resolved YES.")
+                st.balloons()
+                st.rerun()
+        with col2:
+            if st.button("❌ Resolve NO (Event Did Not Happen)", use_container_width=True):
+                oracle.record_resolution(0)
+                report = oracle.calibration_report()
+                save_resolution(selected_event, 0, out.probability, report.get("overall_brier_score"))
+                bs = report.get("overall_brier_score")
+                st.success(f"Resolved NO. Brier Score: {bs:.4f}" if bs else "Resolved NO.")
+                st.rerun()
 
-    # Persist each article
-    for a in ingested:
-        save_article(event_id, a)
+        with st.expander("What is Brier Score?"):
+            st.markdown("""
+            **BS = (P_oracle - Outcome)²**
 
-    out = oracle.compute()
-    snapshot = {
-        "timestamp": time.time(),
-        "probability": round(out.probability, 4),
-        "state": out.state.value,
-        "fast_shock": round(out.fast_shock, 4),
-        "persistent_signal": round(out.persistent_signal, 4),
-        "independent_sources": out.independent_source_count,
-    }
-    save_history_snapshot(event_id, snapshot)
+            - **0.00** = Perfect prediction
+            - **0.10** = Very good (better than most prediction markets)
+            - **0.25** = No skill (same as always saying 50%)
 
-    return {"event_id": event_id, "articles_ingested": len(ingested),
-            "total_articles": out.total_articles_processed,
-            "current_probability": round(out.probability, 4),
-            "state": out.state.value}
+            The oracle targets BS < 0.12 (better than CME FedWatch baseline of ~0.11).
+            """)
 
-
-@app.get("/events/{event_id}/probability")
-def get_probability(event_id: str):
-    oracle = get_oracle(event_id)
-    out = oracle.compute()
-    return {
-        "event_id": event_id,
-        "probability": round(out.probability, 4),
-        "ci_lower": round(out.ci_lower, 4),
-        "ci_upper": round(out.ci_upper, 4),
-        "state": out.state.value,
-        "signal_decomposition": {
-            "prior": round(out.prior, 4),
-            "fast_shock": round(out.fast_shock, 4),
-            "persistent_signal": round(out.persistent_signal, 4),
-        },
-        "independent_sources": out.independent_source_count,
-        "total_articles": out.total_articles_processed,
-        "audit_trail": out.audit_trail[:5],
-        "timestamp": out.timestamp,
-    }
-
-
-@app.get("/events/{event_id}/history")
-def get_event_history(event_id: str):
-    if not event_exists(event_id):
-        raise HTTPException(404, f"Event '{event_id}' not found")
-    history = get_history(event_id)
-    return {"event_id": event_id, "history": history, "count": len(history)}
-
-
-@app.post("/events/{event_id}/resolve")
-def resolve_event(event_id: str, req: ResolveRequest):
-    if req.outcome not in (0, 1):
-        raise HTTPException(400, "Outcome must be 0 or 1")
-    oracle = get_oracle(event_id)
-    oracle.record_resolution(req.outcome)
-    report = oracle.calibration_report()
-    save_resolution(event_id, req.outcome,
-                    oracle._history[-1].probability if oracle._history else 0.5,
-                    report.get("overall_brier_score"))
-    return {"event_id": event_id, "outcome": req.outcome,
-            "brier_score": report["overall_brier_score"], "calibration": report}
-
-
-# ── Frontend ───────────────────────────────────────────────────────────────
-
-@app.get("/")
-def serve_frontend():
-    return FileResponse("static/index.html")
-
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+# ── Footer ─────────────────────────────────────────────────────────────────
+st.divider()
+st.markdown("""
+<div style="text-align:center;color:#6e7681;font-size:12px;padding:8px;">
+    World-as-Oracle v1.0 · Guruprasad Venkatakrishnan (2026) ·
+    Verslan · predictmarkets.finance · verslan.xyz
+</div>
+""", unsafe_allow_html=True)
