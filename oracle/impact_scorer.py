@@ -13,10 +13,17 @@ Guruprasad Venkatakrishnan — Verslan / predictmarkets.finance / verslan.xyz
 """
 
 import json
-import anthropic
+import os
 from oracle.models import Article, SourceTier
 
-client = anthropic.Anthropic()
+# Anthropic client is optional — only needed for auto LLM impact scoring (Layer 3)
+# Manual scoring (pre-set raw_impact + direction) works without any API key
+try:
+    import anthropic
+    _api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
+except ImportError:
+    client = None
 
 IMPACT_SCORING_PROMPT = """You are an expert event probability analyst for a financial oracle system.
 
@@ -80,6 +87,12 @@ def score_article_impact(
         headline=article.headline,
         content=article.content_summary,
     )
+
+    if client is None:
+        # No API key — leave pre-scored values as-is
+        if article.raw_impact == 0.0:
+            article.reasoning_chain = "Auto-scoring unavailable (no ANTHROPIC_API_KEY). Set impact manually."
+        return article
 
     try:
         response = client.messages.create(

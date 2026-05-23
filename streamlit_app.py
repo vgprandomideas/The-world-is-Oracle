@@ -47,6 +47,16 @@ st.markdown("""
 # ── Init DB ────────────────────────────────────────────────────────────────
 init_db()
 
+# ── API Key notice (optional) ──────────────────────────────────────────────
+import os
+if not os.getenv("ANTHROPIC_API_KEY"):
+    st.info(
+        "**Auto-scoring is off** — no ANTHROPIC_API_KEY set. "
+        "You can still use the oracle: just set **Raw Impact** and **Direction** manually when ingesting articles. "
+        "The temporal filter, probability engine, and all math runs without any API key.",
+        icon="ℹ️"
+    )
+
 # ── Oracle cache ───────────────────────────────────────────────────────────
 if "oracles" not in st.session_state:
     st.session_state.oracles = {}
