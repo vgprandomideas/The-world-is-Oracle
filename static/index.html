@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World-as-Oracle</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Georgia', serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
+
+  header {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 16px 32px; display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; color: #f0b429; }
+  header p { font-size: 13px; color: #8b949e; }
+  .badge { background: #1f6feb22; border: 1px solid #1f6feb; color: #58a6ff;
+           font-size: 11px; padding: 2px 8px; border-radius: 12px; }
+
+  main { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
+
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 24px; }
+
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
+  .card h2 { font-size: 14px; font-weight: 600; color: #8b949e; text-transform: uppercase;
+             letter-spacing: 0.5px; margin-bottom: 16px; }
+
+  input, select, textarea {
+    width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    color: #e6edf3; padding: 8px 12px; font-size: 14px; margin-bottom: 10px;
+    font-family: inherit;
+  }
+  textarea { height: 70px; resize: vertical; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #1f6feb; }
+
+  label { font-size: 12px; color: #8b949e; display: block; margin-bottom: 4px; }
+
+  button {
+    background: #1f6feb; color: #fff; border: none; border-radius: 6px;
+    padding: 9px 16px; font-size: 14px; cursor: pointer; width: 100%;
+    font-family: inherit; font-weight: 500;
+  }
+  button:hover { background: #388bfd; }
+  button.secondary { background: #21262d; border: 1px solid #30363d; color: #e6edf3; }
+  button.secondary:hover { background: #30363d; }
+  button.danger { background: #da3633; }
+  button.danger:hover { background: #f85149; }
+  button.small { width: auto; padding: 6px 12px; font-size: 13px; }
+
+  .prob-display {
+    text-align: center; padding: 28px 20px;
+    background: linear-gradient(135deg, #0d1117, #161b22);
+    border-radius: 8px; border: 1px solid #30363d; margin-bottom: 16px;
+  }
+  .prob-big { font-size: 72px; font-weight: 700; line-height: 1;
+              background: linear-gradient(135deg, #f0b429, #ff6b35);
+              -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .prob-label { font-size: 13px; color: #8b949e; margin-top: 8px; }
+
+  .state-badge {
+    display: inline-block; padding: 4px 12px; border-radius: 12px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.5px; margin-top: 10px;
+  }
+  .BASELINE    { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+  .SHOCK_ACTIVE { background: #3d1f00; color: #f0b429; border: 1px solid #f0b42944; }
+  .BUILDING    { background: #1f3d00; color: #3fb950; border: 1px solid #3fb95044; }
+  .SUSTAINED   { background: #003d1f; color: #39d353; border: 1px solid #39d35344; }
+  .CONTESTED   { background: #3d0000; color: #f85149; border: 1px solid #f8514944; }
+  .INSUFFICIENT_SIGNAL { background: #21262d; color: #6e7681; border: 1px solid #21262d; }
+
+  .decomp {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px;
+  }
+  .decomp-item { background: #0d1117; border-radius: 6px; padding: 10px; text-align: center; }
+  .decomp-item .val { font-size: 20px; font-weight: 600; }
+  .decomp-item .lbl { font-size: 11px; color: #8b949e; margin-top: 2px; }
+  .positive { color: #f85149; }
+  .negative { color: #3fb950; }
+  .neutral  { color: #58a6ff; }
+
+  .ci-bar { margin: 12px 0; }
+  .ci-track { background: #21262d; border-radius: 4px; height: 6px; position: relative; }
+  .ci-fill { background: linear-gradient(90deg, #1f6feb, #f0b429);
+             position: absolute; height: 100%; border-radius: 4px; }
+  .ci-labels { display: flex; justify-content: space-between; font-size: 11px; color: #8b949e; margin-top: 4px; }
+
+  .event-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .event-item {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 12px; cursor: pointer; transition: border-color 0.15s;
+  }
+  .event-item:hover { border-color: #1f6feb; }
+  .event-item.active { border-color: #f0b429; }
+  .event-item .ev-id { font-size: 13px; font-weight: 600; color: #e6edf3; }
+  .event-item .ev-desc { font-size: 12px; color: #8b949e; margin-top: 2px; white-space: nowrap;
+                         overflow: hidden; text-overflow: ellipsis; }
+  .event-item .ev-prob { font-size: 18px; font-weight: 700; color: #f0b429; float: right; }
+
+  .article-form { background: #0d1117; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+  .audit-item { background: #0d1117; border-radius: 6px; padding: 10px; margin-bottom: 6px;
+                border-left: 3px solid #1f6feb; }
+  .audit-item .src { font-size: 12px; color: #8b949e; }
+  .audit-item .rsn { font-size: 12px; color: #e6edf3; margin-top: 4px; }
+
+  .chart-container { background: #0d1117; border-radius: 6px; padding: 16px; height: 160px;
+                     display: flex; align-items: flex-end; gap: 4px; margin-bottom: 16px; }
+  .bar { flex: 1; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, #f0b429, #1f6feb);
+         min-height: 4px; transition: height 0.3s; position: relative; }
+  .bar:hover::after { content: attr(data-val); position: absolute; top: -20px; left: 50%;
+                      transform: translateX(-50%); font-size: 10px; color: #f0b429; white-space: nowrap; }
+
+  .tabs { display: flex; gap: 2px; margin-bottom: 16px; }
+  .tab { padding: 8px 16px; font-size: 13px; cursor: pointer; border-radius: 6px; color: #8b949e; }
+  .tab.active { background: #21262d; color: #e6edf3; }
+  .tab:hover { color: #e6edf3; }
+
+  .msg { font-size: 13px; padding: 10px; border-radius: 6px; margin-bottom: 10px; }
+  .msg.ok  { background: #1f3d0022; border: 1px solid #3fb95044; color: #3fb950; }
+  .msg.err { background: #3d000022; border: 1px solid #f8514944; color: #f85149; }
+
+  .empty { text-align: center; color: #6e7681; padding: 40px; font-size: 14px; }
+
+  hr { border: none; border-top: 1px solid #21262d; margin: 16px 0; }
+
+  footer { text-align: center; color: #6e7681; font-size: 12px; padding: 32px;
+           border-top: 1px solid #21262d; margin-top: 48px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>⬡ World-as-Oracle</h1>
+    <p>Adversarial-Resistant AI Probability Estimation</p>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+    <span class="badge">Verslan</span>
+    <span class="badge">predictmarkets.finance</span>
+    <span class="badge">verslan.xyz</span>
+  </div>
+</header>
+
+<main>
+  <div id="msg-area"></div>
+
+  <div class="grid">
+
+    <!-- LEFT: Event Management -->
+    <div>
+      <div class="card" style="margin-bottom:16px;">
+        <h2>Active Events</h2>
+        <div class="event-list" id="event-list">
+          <div class="empty">No events yet. Create one below.</div>
+        </div>
+        <button class="secondary small" onclick="toggleCreateForm()">+ New Event</button>
+      </div>
+
+      <div class="card" id="create-form" style="display:none;">
+        <h2>Create Event</h2>
+        <label>Event ID</label>
+        <input id="f-eid" placeholder="fed_rate_jun2023" />
+        <label>Description</label>
+        <textarea id="f-desc" placeholder="Federal Reserve raises rates at June 14, 2023 FOMC"></textarea>
+        <label>Resolution Criteria</label>
+        <textarea id="f-res" placeholder="Fed funds rate increases by 25bps or more"></textarea>
+        <label>Category</label>
+        <select id="f-cat">
+          <option value="central_bank">Central Bank</option>
+          <option value="corporate_legal" selected>Corporate / Legal</option>
+          <option value="geopolitical">Geopolitical</option>
+          <option value="electoral">Electoral</option>
+          <option value="macro_data">Macro Data</option>
+          <option value="sovereign_credit">Sovereign Credit</option>
+          <option value="crypto_protocol">Crypto Protocol</option>
+        </select>
+        <div class="row3">
+          <div>
+            <label>Historical Base Rate</label>
+            <input id="f-hist" type="number" step="0.01" min="0" max="1" value="0.15" />
+          </div>
+          <div>
+            <label>Structural Prior</label>
+            <input id="f-struc" type="number" step="0.01" min="0" max="1" value="0.20" />
+          </div>
+          <div>
+            <label>Market Prior</label>
+            <input id="f-mkt" type="number" step="0.01" min="0" max="1" placeholder="optional" />
+          </div>
+        </div>
+        <button onclick="createEvent()">Create Event</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: Oracle Dashboard -->
+    <div>
+      <div id="no-event" class="card">
+        <div class="empty">← Select or create an event to see oracle output</div>
+      </div>
+
+      <div id="dashboard" style="display:none;">
+
+        <div class="tabs">
+          <div class="tab active" onclick="showTab('oracle')">Oracle Output</div>
+          <div class="tab" onclick="showTab('ingest')">Ingest Article</div>
+          <div class="tab" onclick="showTab('history')">History</div>
+        </div>
+
+        <!-- ORACLE TAB -->
+        <div id="tab-oracle">
+          <div class="prob-display">
+            <div class="prob-big" id="prob-val">—</div>
+            <div class="prob-label">P(Event Resolves YES)</div>
+            <div><span class="state-badge" id="state-badge">—</span></div>
+          </div>
+
+          <div class="decomp">
+            <div class="decomp-item">
+              <div class="val neutral" id="d-prior">—</div>
+              <div class="lbl">Prior P₀</div>
+            </div>
+            <div class="decomp-item">
+              <div class="val" id="d-shock">—</div>
+              <div class="lbl">Fast Shock F(t)</div>
+            </div>
+            <div class="decomp-item">
+              <div class="val" id="d-persist">—</div>
+              <div class="lbl">Persistent P(t)</div>
+            </div>
+          </div>
+
+          <div class="ci-bar">
+            <div style="font-size:12px;color:#8b949e;margin-bottom:6px;">
+              Confidence Interval: <span id="ci-text">—</span>
+            </div>
+            <div class="ci-track">
+              <div class="ci-fill" id="ci-fill" style="left:0%;width:0%"></div>
+            </div>
+            <div class="ci-labels">
+              <span>0%</span><span>50%</span><span>100%</span>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <div style="flex:1;background:#0d1117;border-radius:6px;padding:10px;text-align:center;">
+              <div style="font-size:20px;font-weight:600;color:#58a6ff;" id="d-sources">—</div>
+              <div style="font-size:11px;color:#8b949e;">Independent Sources</div>
+            </div>
+            <div style="flex:1;background:#0d1117;border-radius:6px;padding:10px;text-align:center;">
+              <div style="font-size:20px;font-weight:600;color:#58a6ff;" id="d-total">—</div>
+              <div style="font-size:11px;color:#8b949e;">Total Articles</div>
+            </div>
+          </div>
+
+          <div class="card" style="padding:12px;margin-bottom:12px;">
+            <h2 style="margin-bottom:10px;">Audit Trail (Top Sources)</h2>
+            <div id="audit-trail"></div>
+          </div>
+
+          <div class="row2">
+            <button onclick="refreshOracle()" class="secondary">↻ Refresh</button>
+            <button onclick="showResolveModal()" class="danger">Resolve Event</button>
+          </div>
+        </div>
+
+        <!-- INGEST TAB -->
+        <div id="tab-ingest" style="display:none;">
+          <div class="card article-form">
+            <h2>Ingest Article / Signal</h2>
+            <div class="row2">
+              <div>
+                <label>Article ID</label>
+                <input id="a-id" placeholder="art_001" />
+              </div>
+              <div>
+                <label>Source Name</label>
+                <input id="a-src" placeholder="Bloomberg / DOJ Filing" />
+              </div>
+            </div>
+            <div class="row2">
+              <div>
+                <label>Source Tier</label>
+                <select id="a-tier">
+                  <option value="1">Tier 1 — Court filing, regulatory order</option>
+                  <option value="2">Tier 2 — Local financial press</option>
+                  <option value="3">Tier 3 — Regional international press</option>
+                  <option value="4" selected>Tier 4 — International wire (Bloomberg, Reuters)</option>
+                  <option value="5">Tier 5 — Capital flow signal (FII, CDS, bonds)</option>
+                  <option value="6">Tier 6 — Unverified / social media</option>
+                </select>
+              </div>
+              <div>
+                <label>Publication Date</label>
+                <input id="a-date" type="date" />
+              </div>
+            </div>
+            <label>Headline</label>
+            <input id="a-head" placeholder="US DOJ Files Criminal Charges Against..." />
+            <label>Content Summary</label>
+            <textarea id="a-content" placeholder="Brief summary of the article's key claims..."></textarea>
+            <div class="row3">
+              <div>
+                <label>Raw Impact (1-10)</label>
+                <input id="a-impact" type="number" min="0" max="10" step="0.5" value="5" />
+              </div>
+              <div>
+                <label>Direction</label>
+                <select id="a-dir">
+                  <option value="1">+1 (Increases probability)</option>
+                  <option value="0">0 (Neutral)</option>
+                  <option value="-1">-1 (Decreases probability)</option>
+                </select>
+              </div>
+              <div>
+                <label>URL (optional)</label>
+                <input id="a-url" placeholder="https://..." />
+              </div>
+            </div>
+            <label>Reasoning (optional)</label>
+            <input id="a-reason" placeholder="Why this article impacts the probability..." />
+            <button onclick="ingestArticle()">Ingest Article</button>
+          </div>
+        </div>
+
+        <!-- HISTORY TAB -->
+        <div id="tab-history" style="display:none;">
+          <div class="card">
+            <h2>Probability History</h2>
+            <div class="chart-container" id="chart"></div>
+            <div id="history-list"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  World-as-Oracle v1.0 — Guruprasad Venkatakrishnan (2026)<br>
+  Verslan / predictmarkets.finance / verslan.xyz
+</footer>
+
+<script>
+const API = '';  // Same origin
+let activeEvent = null;
+
+// ── Utils ──────────────────────────────────────────────────────────────────
+
+function msg(text, type='ok') {
+  const el = document.getElementById('msg-area');
+  el.innerHTML = `<div class="msg ${type}">${text}</div>`;
+  setTimeout(() => el.innerHTML = '', 4000);
+}
+
+async function api(method, path, body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || 'API error');
+  return data;
+}
+
+function pct(v) { return (v * 100).toFixed(1) + '%'; }
+function signed(v) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + 'pp'; }
+
+// ── Event List ─────────────────────────────────────────────────────────────
+
+async function loadEvents() {
+  try {
+    const data = await api('GET', '/events');
+    const list = document.getElementById('event-list');
+    if (data.events.length === 0) {
+      list.innerHTML = '<div class="empty">No events yet. Create one below.</div>';
+      return;
+    }
+    list.innerHTML = data.events.map(e => `
+      <div class="event-item ${e.event_id === activeEvent ? 'active' : ''}"
+           onclick="selectEvent('${e.event_id}')">
+        <span class="ev-prob">${pct(e.probability)}</span>
+        <div class="ev-id">${e.event_id}</div>
+        <div class="ev-desc">${e.description}</div>
+        <div style="margin-top:6px;">
+          <span class="state-badge ${e.state}">${e.state}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { console.error(e); }
+}
+
+// ── Oracle Display ─────────────────────────────────────────────────────────
+
+async function selectEvent(id) {
+  activeEvent = id;
+  document.getElementById('no-event').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  showTab('oracle');
+  await refreshOracle();
+  await loadEvents();
+}
+
+async function refreshOracle() {
+  if (!activeEvent) return;
+  try {
+    const d = await api('GET', `/events/${activeEvent}/probability`);
+    const p = d.probability;
+
+    document.getElementById('prob-val').textContent = pct(p);
+
+    const sb = document.getElementById('state-badge');
+    sb.textContent = d.state;
+    sb.className = 'state-badge ' + d.state;
+
+    document.getElementById('d-prior').textContent = pct(d.signal_decomposition.prior);
+    const shock = d.signal_decomposition.fast_shock;
+    const persist = d.signal_decomposition.persistent_signal;
+    const sEl = document.getElementById('d-shock');
+    sEl.textContent = signed(shock);
+    sEl.className = 'val ' + (shock > 0 ? 'positive' : shock < 0 ? 'negative' : 'neutral');
+    const pEl = document.getElementById('d-persist');
+    pEl.textContent = signed(persist);
+    pEl.className = 'val ' + (persist > 0 ? 'positive' : persist < 0 ? 'negative' : 'neutral');
+
+    document.getElementById('d-sources').textContent = d.independent_sources;
+    document.getElementById('d-total').textContent = d.total_articles;
+
+    // CI bar
+    const lo = d.ci_lower, hi = d.ci_upper;
+    document.getElementById('ci-text').textContent = `[${pct(lo)}, ${pct(hi)}]`;
+    document.getElementById('ci-fill').style.left = pct(lo);
+    document.getElementById('ci-fill').style.width = pct(hi - lo);
+
+    // Audit trail
+    const at = document.getElementById('audit-trail');
+    if (d.audit_trail.length === 0) {
+      at.innerHTML = '<div class="empty" style="padding:16px;">No qualifying sources yet.</div>';
+    } else {
+      at.innerHTML = d.audit_trail.map(a => `
+        <div class="audit-item">
+          <div class="src">Tier ${a.tier} · ${a.source} · ι=${a.independence_score?.toFixed(2) || '—'} · impact=${a.signed_impact}</div>
+          <div class="rsn">${a.reasoning || ''}</div>
+        </div>
+      `).join('');
+    }
+  } catch(e) { msg(e.message, 'err'); }
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+
+function showTab(name) {
+  ['oracle','ingest','history'].forEach(t => {
+    document.getElementById('tab-' + t).style.display = t === name ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tab').forEach((el, i) => {
+    el.classList.toggle('active', ['oracle','ingest','history'][i] === name);
+  });
+  if (name === 'history') loadHistory();
+}
+
+// ── Create Event ───────────────────────────────────────────────────────────
+
+function toggleCreateForm() {
+  const f = document.getElementById('create-form');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+async function createEvent() {
+  const mkt = parseFloat(document.getElementById('f-mkt').value);
+  const body = {
+    event_id: document.getElementById('f-eid').value.trim(),
+    event_description: document.getElementById('f-desc').value.trim(),
+    resolution_criteria: document.getElementById('f-res').value.trim(),
+    category: document.getElementById('f-cat').value,
+    historical_base_rate: parseFloat(document.getElementById('f-hist').value),
+    structural_prior: parseFloat(document.getElementById('f-struc').value),
+    market_implied_prior: isNaN(mkt) ? null : mkt,
+  };
+  if (!body.event_id || !body.event_description) { msg('Fill in required fields', 'err'); return; }
+  try {
+    await api('POST', '/events', body);
+    msg(`Event '${body.event_id}' created. Prior = ${(body.historical_base_rate * 100).toFixed(0)}%`);
+    document.getElementById('create-form').style.display = 'none';
+    await loadEvents();
+    await selectEvent(body.event_id);
+  } catch(e) { msg(e.message, 'err'); }
+}
+
+// ── Ingest Article ─────────────────────────────────────────────────────────
+
+async function ingestArticle() {
+  const dateVal = document.getElementById('a-date').value;
+  const pub_time = dateVal ? new Date(dateVal).getTime() / 1000 : Date.now() / 1000;
+
+  const body = [{
+    article_id: document.getElementById('a-id').value || `art_${Date.now()}`,
+    source_name: document.getElementById('a-src').value,
+    tier: parseInt(document.getElementById('a-tier').value),
+    publication_time: pub_time,
+    headline: document.getElementById('a-head').value,
+    content_summary: document.getElementById('a-content').value,
+    url: document.getElementById('a-url').value,
+    raw_impact: parseFloat(document.getElementById('a-impact').value),
+    direction: parseInt(document.getElementById('a-dir').value),
+    reasoning_chain: document.getElementById('a-reason').value,
+  }];
+
+  if (!body[0].source_name || !body[0].headline) { msg('Source name and headline required', 'err'); return; }
+
+  try {
+    const r = await api('POST', `/events/${activeEvent}/articles`, body);
+    msg(`Ingested. New probability: ${pct(r.current_probability)} [${r.state}]`);
+    await loadEvents();
+    showTab('oracle');
+    await refreshOracle();
+  } catch(e) { msg(e.message, 'err'); }
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+
+async function loadHistory() {
+  try {
+    const d = await api('GET', `/events/${activeEvent}/history`);
+    const history = d.history;
+    const chart = document.getElementById('chart');
+    const list = document.getElementById('history-list');
+
+    if (history.length === 0) {
+      chart.innerHTML = '<div class="empty" style="width:100%;">No history yet. Ingest articles to build history.</div>';
+      list.innerHTML = '';
+      return;
+    }
+
+    // Bar chart
+    const maxH = 120;
+    chart.innerHTML = history.map(h => {
+      const h_px = Math.max(4, h.probability * maxH);
+      const date = new Date(h.timestamp * 1000).toLocaleDateString();
+      return `<div class="bar" style="height:${h_px}px" data-val="${pct(h.probability)} ${date}" title="${pct(h.probability)} — ${h.state}"></div>`;
+    }).join('');
+
+    // List
+    list.innerHTML = history.slice().reverse().map(h => `
+      <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d;font-size:13px;">
+        <span style="color:#8b949e;">${new Date(h.timestamp*1000).toLocaleString()}</span>
+        <span class="state-badge ${h.state}" style="font-size:10px;">${h.state}</span>
+        <span style="color:#f0b429;font-weight:600;">${pct(h.probability)}</span>
+      </div>
+    `).join('');
+  } catch(e) { msg(e.message, 'err'); }
+}
+
+// ── Resolve ────────────────────────────────────────────────────────────────
+
+function showResolveModal() {
+  const outcome = confirm(`Resolve event '${activeEvent}'?\n\nClick OK for YES (event happened)\nClick Cancel for NO (event did not happen)`);
+  resolveEvent(outcome ? 1 : 0);
+}
+
+async function resolveEvent(outcome) {
+  try {
+    const r = await api('POST', `/events/${activeEvent}/resolve`, {outcome});
+    const bs = r.brier_score ? r.brier_score.toFixed(4) : 'N/A';
+    msg(`Event resolved: ${outcome === 1 ? 'YES' : 'NO'} | Brier Score: ${bs}`);
+  } catch(e) { msg(e.message, 'err'); }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+loadEvents();
+setInterval(loadEvents, 30000);  // Refresh list every 30s
+</script>
+</body>
+</html>
