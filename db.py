@@ -14,7 +14,7 @@ import os
 import time
 from typing import Optional
 
-DATABASE_URL = os.getenv("DATABASE_URL", "oracle.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "/tmp/oracle.db")  # /tmp is writable on Streamlit Cloud
 
 
 def get_conn():
