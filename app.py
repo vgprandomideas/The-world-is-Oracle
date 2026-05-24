@@ -1,106 +1,90 @@
 """
-World-as-Oracle — Professional Trading Dashboard
-Bayesian Engine + Vol Surface + Greeks + Correlation + Live Feed
-
-Guruprasad Venkatakrishnan (2026)
-Verslan / predictmarkets.finance / verslan.xyz
+World-as-Oracle research and risk workbench.
 """
 
-import time, os, math
+import copy
+import time
+from datetime import date, datetime, timedelta
+
 import numpy as np
 import pandas as pd
 import streamlit as st
-from datetime import datetime, date, timedelta
 
-from oracle import WorldOracle, EventCategory
-from oracle.models import OracleState, SourceTier
-from oracle.impact_scorer import create_article_from_dict
-from oracle.bayesian_engine import BayesianOracleEngine
-from oracle.vol_surface import compute_vol_surface, compute_greeks
+from db import (
+    event_exists,
+    get_all_events,
+    get_articles,
+    get_event,
+    get_history,
+    init_db,
+    save_article,
+    save_event,
+    save_history_snapshot,
+)
+from oracle import EventCategory, WorldOracle
+from oracle.bayesian_engine import BayesianOracleEngine, likelihood_ratio
+from oracle.car_presets import get_car_preset, get_preset_for_event_id, list_car_presets
 from oracle.correlation import CorrelationMatrix
-from oracle.live_feed import live_ingest, build_query_from_event
+from oracle.deterministic_car import run_deterministic_car
+from oracle.impact_scorer import create_article_from_dict
 from oracle.independence import score_all_articles
-from db import (init_db, save_event, get_event, get_all_events,
-                save_article, get_articles, save_history_snapshot,
-                get_history, save_resolution, event_exists)
+from oracle.live_feed import build_query_from_event, live_ingest
+from oracle.models import Article, SourceTier
+from oracle.portfolio import PortfolioPosition, analyze_portfolio_risk, summarize_positions
+from oracle.temporal_filter import count_confirming_signals, decay_factor
+from oracle.vol_surface import compute_greeks, compute_vol_surface
 
-# ── Page config ──────────────────────────────────────────────────────────
+
 st.set_page_config(
-    page_title="World-as-Oracle | predictmarkets.finance",
-    page_icon="⬡",
+    page_title="World-as-Oracle | Advanced Workbench",
+    page_icon="O",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono&display=swap');
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
 
-* { font-family: 'Inter', sans-serif !important; }
-.stApp { background: #0a0e1a; }
+    * { font-family: 'Inter', sans-serif !important; }
+    .stApp { background: #09111f; color: #e5edf8; }
+    [data-testid="stSidebar"] { background: #0d1728 !important; }
+    .hero {
+        background: linear-gradient(135deg, #0c1728 0%, #111f36 100%);
+        border: 1px solid #203553;
+        border-radius: 12px;
+        padding: 24px 28px;
+        margin-bottom: 18px;
+    }
+    .hero-prob {
+        font-size: 82px;
+        line-height: 1;
+        font-weight: 800;
+        color: #f59e0b;
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+    .panel {
+        background: #0d1728;
+        border: 1px solid #1b2c47;
+        border-radius: 10px;
+        padding: 16px;
+    }
+    .mono { font-family: 'JetBrains Mono', monospace !important; }
+    .small { color: #91a4c2; font-size: 12px; }
+    .state-pill {
+        display: inline-block;
+        padding: 5px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-.oracle-header {
-    background: linear-gradient(135deg, #0d1421 0%, #111827 100%);
-    border: 1px solid #1e3a5f; border-radius: 12px;
-    padding: 20px 28px; margin-bottom: 20px;
-    display: flex; align-items: center; justify-content: space-between;
-}
-.prob-mega {
-    font-size: 88px; font-weight: 800; line-height: 1;
-    font-family: 'Inter', sans-serif;
-    background: linear-gradient(135deg, #f59e0b, #ef4444, #f59e0b);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    animation: pulse 3s ease-in-out infinite;
-}
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.85} }
 
-.metric-card {
-    background: #111827; border: 1px solid #1f2937;
-    border-radius: 10px; padding: 16px; text-align: center;
-    transition: border-color 0.2s;
-}
-.metric-card:hover { border-color: #f59e0b; }
-.metric-val { font-size: 28px; font-weight: 700; color: #f59e0b; font-family: 'JetBrains Mono'; }
-.metric-lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
-
-.state-BASELINE          { background:#1f2937;color:#9ca3af; }
-.state-SHOCK_ACTIVE      { background:#451a03;color:#fbbf24; }
-.state-BUILDING          { background:#052e16;color:#34d399; }
-.state-SUSTAINED         { background:#022c22;color:#10b981; }
-.state-CONTESTED         { background:#450a0a;color:#f87171; }
-.state-INSUFFICIENT_SIGNAL{background:#111827;color:#6b7280; }
-
-.state-pill {
-    display:inline-block; padding:6px 16px; border-radius:20px;
-    font-size:13px; font-weight:600; letter-spacing:0.5px;
-}
-.vol-quiet  { color: #34d399; }
-.vol-active { color: #fbbf24; }
-.vol-crisis { color: #f87171; }
-
-.greek-box {
-    background:#0d1421; border:1px solid #1e3a5f; border-radius:8px;
-    padding:14px; margin-bottom:8px;
-}
-.greek-val { font-size:22px; font-weight:700; color:#60a5fa; font-family:'JetBrains Mono'; }
-.greek-lbl { font-size:11px; color:#6b7280; }
-.greek-int { font-size:12px; color:#9ca3af; margin-top:4px; }
-
-.lr-bar-pos { background: linear-gradient(90deg, #059669, #10b981); height:8px; border-radius:4px; }
-.lr-bar-neg { background: linear-gradient(90deg, #dc2626, #ef4444); height:8px; border-radius:4px; }
-
-.live-dot { display:inline-block; width:8px; height:8px; background:#10b981;
-            border-radius:50%; animation: blink 1s infinite; margin-right:6px; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-
-[data-testid="stSidebar"] { background: #0d1421 !important; }
-[data-testid="stSidebar"] .stSelectbox label,
-[data-testid="stSidebar"] .stTextInput label { color: #9ca3af !important; }
-div[data-testid="metric-container"] { background:#111827; border:1px solid #1f2937; border-radius:8px; padding:12px; }
-</style>
-""", unsafe_allow_html=True)
-
-# ── Init ──────────────────────────────────────────────────────────────────
 init_db()
 
 if "oracles" not in st.session_state:
@@ -111,604 +95,715 @@ if "correlation" not in st.session_state:
     st.session_state.correlation = CorrelationMatrix()
 if "live_articles" not in st.session_state:
     st.session_state.live_articles = {}
+if "portfolio_positions" not in st.session_state:
+    st.session_state.portfolio_positions = []
+if "portfolio_result" not in st.session_state:
+    st.session_state.portfolio_result = None
+
+
+STATE_COLORS = {
+    "BASELINE": "#6b7280",
+    "SHOCK_ACTIVE": "#f59e0b",
+    "BUILDING": "#22c55e",
+    "SUSTAINED": "#14b8a6",
+    "CONTESTED": "#ef4444",
+    "INSUFFICIENT_SIGNAL": "#64748b",
+    "ORACLE_DEGRADED": "#a855f7",
+}
+
 
 def get_oracle(event_id):
     if event_id not in st.session_state.oracles:
-        ev = get_event(event_id)
-        if not ev: st.error(f"Event {event_id} not found"); st.stop()
-        cat_map = {c.value: c for c in EventCategory}
-        from oracle.models import Article
+        event = get_event(event_id)
+        if not event:
+            st.error(f"Event {event_id} not found")
+            st.stop()
+
+        category_map = {category.value: category for category in EventCategory}
         oracle = WorldOracle(
-            event_id=event_id, event_description=ev["description"],
-            resolution_criteria=ev["resolution"],
-            category=cat_map.get(ev["category"], EventCategory.CORPORATE_LEGAL),
+            event_id=event_id,
+            event_description=event["description"],
+            resolution_criteria=event["resolution"],
+            category=category_map.get(event["category"], EventCategory.CORPORATE_LEGAL),
+            platt_a=event.get("platt_a", 1.0),
+            platt_b=event.get("platt_b", 0.0),
         )
-        oracle._prior = ev["prior"]
-        tier_map = {i: SourceTier(i) for i in range(1,7)}
+        oracle._prior = event["prior"]
+
+        tier_map = {index: SourceTier(index) for index in range(1, 7)}
         for row in get_articles(event_id):
-            a = Article(
-                article_id=row["article_id"], source_name=row["source_name"],
+            article = Article(
+                article_id=row["article_id"],
+                source_name=row["source_name"],
                 tier=tier_map.get(row["tier"], SourceTier.TIER4_WIRE),
-                publication_time=row["publication_time"], headline=row["headline"],
-                content_summary=row.get("content_summary",""),
-                raw_impact=row.get("raw_impact",0.0), direction=row.get("direction",0),
-                independence_score=row.get("independence_score",0.0),
-                reasoning_chain=row.get("reasoning_chain",""),
+                publication_time=row["publication_time"],
+                headline=row["headline"],
+                content_summary=row.get("content_summary", ""),
+                url=row.get("url", ""),
+                raw_impact=row.get("raw_impact", 0.0),
+                direction=row.get("direction", 0),
+                independence_score=row.get("independence_score", 0.0),
+                reasoning_chain=row.get("reasoning_chain", ""),
             )
-            oracle._articles.append(a)
+            oracle._articles.append(article)
+
         st.session_state.oracles[event_id] = oracle
     return st.session_state.oracles[event_id]
 
+
 def get_bayesian(event_id, oracle):
     if event_id not in st.session_state.bayesian:
-        from oracle.config import CATEGORY_CONFIGS
-        config = oracle.config
-        st.session_state.bayesian[event_id] = BayesianOracleEngine(oracle._prior, config)
+        st.session_state.bayesian[event_id] = BayesianOracleEngine(oracle._prior, oracle.config)
     return st.session_state.bayesian[event_id]
 
-# ── Sidebar ───────────────────────────────────────────────────────────────
+
+def save_snapshot(event_id, oracle_output):
+    save_history_snapshot(
+        event_id,
+        {
+            "timestamp": time.time(),
+            "probability": round(oracle_output.probability, 4),
+            "state": oracle_output.state.value,
+            "fast_shock": round(oracle_output.fast_shock, 4),
+            "persistent_signal": round(oracle_output.persistent_signal, 4),
+            "independent_sources": oracle_output.independent_source_count,
+        },
+    )
+
+
+def create_event_from_preset(preset_key):
+    preset = get_car_preset(preset_key)
+    seed = preset["seed_event"]
+    category_map = {category.value: category for category in EventCategory}
+    category = category_map.get(seed["category"], EventCategory.CORPORATE_LEGAL)
+    oracle = WorldOracle(
+        event_id=seed["event_id"],
+        event_description=seed["description"],
+        resolution_criteria=seed["resolution"],
+        category=category,
+    )
+    oracle.set_prior(
+        seed["historical_base_rate"],
+        seed["structural_prior"],
+        seed["market_implied_prior"],
+    )
+    save_event(
+        seed["event_id"],
+        seed["description"],
+        seed["resolution"],
+        seed["category"],
+        oracle._prior,
+        seed["historical_base_rate"],
+        seed["structural_prior"],
+        seed["market_implied_prior"],
+    )
+    st.session_state.oracles[seed["event_id"]] = oracle
+    st.session_state.correlation.add_event(seed["event_id"])
+    st.session_state.selected_event_override = seed["event_id"]
+
+
+def current_probability_map(event_ids):
+    values = {}
+    for event_id in event_ids:
+        try:
+            values[event_id] = get_oracle(event_id).compute().probability
+        except Exception:
+            values[event_id] = 0.5
+    return values
+
+
+def current_daily_vols(event_ids, probability_map):
+    vol_map = {}
+    for event_id in event_ids:
+        event = get_event(event_id)
+        oracle = get_oracle(event_id)
+        output = oracle.compute()
+        vol_map[event_id] = compute_vol_surface(
+            p=probability_map.get(event_id, 0.5),
+            category=event["category"],
+            state=output.state,
+            n_signals_24h=len(oracle._articles),
+        )["daily_vol"]
+    return vol_map
+
+
 with st.sidebar:
-    st.markdown("### ⬡ predictmarkets.finance")
-    st.caption("World-as-Oracle · OTC Derivatives Desk")
+    st.markdown("### predictmarkets.finance")
+    st.caption("World-as-Oracle research and derivatives desk")
     st.divider()
 
     events = get_all_events()
-    event_ids = [e["event_id"] for e in events]
-    selected_event = st.selectbox("Active Event", event_ids if event_ids else ["—"])
+    event_ids = [event["event_id"] for event in events]
+    pending_event = st.session_state.pop("selected_event_override", None)
+    default_index = event_ids.index(pending_event) if pending_event in event_ids else 0
+    selected_event = st.selectbox("Active Event", event_ids if event_ids else ["--"], index=default_index if event_ids else 0)
 
-    if st.button("⟳ Live Ingest", use_container_width=True, type="primary"):
-        if selected_event and selected_event != "—":
+    if st.button("Live Ingest", use_container_width=True, type="primary"):
+        if selected_event and selected_event != "--":
             oracle = get_oracle(selected_event)
-            ev = get_event(selected_event)
-            query = build_query_from_event(ev["description"])
-            with st.spinner(f"Fetching live articles for: {query}..."):
+            event = get_event(selected_event)
+            query = build_query_from_event(event["description"])
+            with st.spinner(f"Fetching live articles for: {query}"):
                 articles = live_ingest(query, hours_back=48, max_per_source=15)
-                if articles:
-                    oracle.ingest_articles(articles, auto_score_independence=True)
-                    st.session_state.live_articles[selected_event] = articles
-                    st.success(f"✓ Ingested {len(articles)} live articles")
-                else:
-                    st.warning("No articles found. Try GDELT manually.")
+            if articles:
+                oracle.ingest_articles(articles, auto_score_independence=True)
+                st.session_state.live_articles[selected_event] = articles
+                st.success(f"Ingested {len(articles)} live articles")
+            else:
+                st.warning("No articles found.")
 
-    st.divider()
-
-    with st.expander("➕ New Event"):
+    with st.expander("New Event", expanded=not bool(event_ids)):
         with st.form("new_event"):
-            eid     = st.text_input("Event ID")
-            edesc   = st.text_area("Description", height=70)
-            eres    = st.text_area("Resolution Criteria", height=70)
-            ecat    = st.selectbox("Category", ["central_bank","corporate_legal","geopolitical","electoral","macro_data","sovereign_credit","crypto_protocol"])
-            c1,c2   = st.columns(2)
-            with c1: ehist = st.number_input("Base Rate", 0.0, 1.0, 0.15, 0.01)
-            with c2: estruct = st.number_input("Structural", 0.0, 1.0, 0.20, 0.01)
-            emkt = st.number_input("Market Prior", 0.0, 1.0, 0.0, 0.01)
-            notional = st.number_input("Notional ($)", 100000, 100000000, 1000000, 100000)
-            res_date = st.date_input("Resolution Date", value=date.today() + timedelta(days=90))
+            event_id = st.text_input("Event ID")
+            description = st.text_area("Description", height=70)
+            resolution = st.text_area("Resolution Criteria", height=70)
+            category = st.selectbox(
+                "Category",
+                [
+                    "central_bank",
+                    "corporate_legal",
+                    "geopolitical",
+                    "electoral",
+                    "macro_data",
+                    "sovereign_credit",
+                    "crypto_protocol",
+                ],
+            )
+            col_a, col_b = st.columns(2)
+            with col_a:
+                hist_base = st.number_input("Base Rate", 0.0, 1.0, 0.15, 0.01)
+            with col_b:
+                structural = st.number_input("Structural", 0.0, 1.0, 0.20, 0.01)
+            market_prior = st.number_input("Market Prior", 0.0, 1.0, 0.0, 0.01)
 
             if st.form_submit_button("Create", type="primary"):
-                if eid and edesc:
-                    cat_map = {c.value: c for c in EventCategory}
-                    cat = cat_map.get(ecat, EventCategory.CORPORATE_LEGAL)
-                    oracle = WorldOracle(event_id=eid, event_description=edesc,
-                                        resolution_criteria=eres, category=cat)
-                    mkt = emkt if emkt > 0 else None
-                    oracle.set_prior(ehist, estruct, mkt)
-                    save_event(eid, edesc, eres, ecat, oracle._prior, ehist, estruct, mkt)
-                    st.session_state.oracles[eid] = oracle
-                    st.session_state.correlation.add_event(eid)
-                    st.success(f"✓ Created {eid}")
+                if event_id and description:
+                    category_map = {item.value: item for item in EventCategory}
+                    oracle = WorldOracle(
+                        event_id=event_id,
+                        event_description=description,
+                        resolution_criteria=resolution,
+                        category=category_map.get(category, EventCategory.CORPORATE_LEGAL),
+                    )
+                    oracle.set_prior(hist_base, structural, market_prior if market_prior > 0 else None)
+                    save_event(
+                        event_id,
+                        description,
+                        resolution,
+                        category,
+                        oracle._prior,
+                        hist_base,
+                        structural,
+                        market_prior if market_prior > 0 else None,
+                    )
+                    st.session_state.oracles[event_id] = oracle
+                    st.session_state.correlation.add_event(event_id)
+                    st.session_state.selected_event_override = event_id
+                    st.success(f"Created {event_id}")
                     st.rerun()
 
-    # Notional & resolution date for Greeks
-    st.divider()
-    st.markdown("**Derivatives Desk**")
-    notional_desk = st.number_input("Notional ($)", 100000, 100000000, 1000000, 100000, key="desk_notional")
-    fixed_prob = st.slider("Fixed Probability (K)", 0.05, 0.95, 0.50, 0.01, key="desk_k")
-    res_days = st.number_input("Days to Resolution", 1, 365, 90, key="desk_days")
+    with st.expander("Research Presets"):
+        presets = list_car_presets()
+        preset_keys = [item["key"] for item in presets]
+        preset_key = st.selectbox(
+            "Preset Case",
+            preset_keys,
+            format_func=lambda key: next(item["title"] for item in presets if item["key"] == key),
+        )
+        preset = get_car_preset(preset_key)
+        st.caption(preset["question"])
+        if st.button("Load preset event", use_container_width=True):
+            create_event_from_preset(preset_key)
+            st.success(f"Loaded {preset['title']}")
+            st.rerun()
 
-# ── Main ───────────────────────────────────────────────────────────────────
-if not selected_event or selected_event == "—":
-    st.markdown("## ⬡ World-as-Oracle")
-    st.markdown("**Create an event in the sidebar to begin.**")
+    st.divider()
+    st.markdown("**Desk Settings**")
+    desk_notional = st.number_input("Notional ($)", 100000, 100000000, 1000000, 100000)
+    desk_fixed_prob = st.slider("Fixed Probability (K)", 0.05, 0.95, 0.50, 0.01)
+    desk_days = st.number_input("Days to Resolution", 1, 365, 90)
+
+
+if not selected_event or selected_event == "--":
+    st.markdown(
+        """
+        <div class="hero">
+          <div style="font-size:14px;color:#91a4c2;margin-bottom:8px;">Research and Risk Workbench</div>
+          <div style="font-size:34px;font-weight:700;margin-bottom:8px;">World-as-Oracle</div>
+          <div style="max-width:760px;color:#b7c6dc;">
+            Create an event or load a paper-backed preset to explore the core oracle,
+            deterministic CAR analysis, and portfolio risk tooling in one place.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.dataframe(pd.DataFrame(list_car_presets()), hide_index=True, use_container_width=True)
     st.stop()
 
+
 oracle = get_oracle(selected_event)
-ev_info = get_event(selected_event)
+event_info = get_event(selected_event)
 bayes = get_bayesian(selected_event, oracle)
-current_time = time.time()
+now = time.time()
 
-# Run oracle
-out = oracle.compute(current_time)
-p = out.probability
+output = oracle.compute(now)
+bayes_result = bayes.compute(oracle._articles, now, use_bootstrap=len(oracle._articles) >= 3)
+display_probability = bayes_result["posterior"] if bayes_result["n_signals"] >= 2 else output.probability
 
-# Bayesian posterior
-bayes_result = bayes.compute(oracle._articles, current_time, use_bootstrap=len(oracle._articles) >= 3)
-p_bayes = bayes_result["posterior"]
-p_std = bayes_result["std"]
-
-# Use Bayesian P if we have enough signals, else oracle P
-p_display = p_bayes if bayes_result["n_signals"] >= 2 else p
-
-# Volatility surface
-posterior_hist = [h["probability"] for h in get_history(selected_event)[-30:]]
+history = get_history(selected_event)
+posterior_hist = [row["probability"] for row in history[-30:]]
 vol_data = compute_vol_surface(
-    p=p_display,
-    category=ev_info["category"],
-    state=out.state,
-    days_to_resolution=res_days,
+    p=display_probability,
+    category=event_info["category"],
+    state=output.state,
+    days_to_resolution=desk_days,
     n_signals_24h=bayes_result["n_signals"],
     posterior_history=posterior_hist,
 )
-
-# Greeks
 greeks = compute_greeks(
-    p=p_display,
-    notional=notional_desk,
+    p=display_probability,
+    notional=desk_notional,
     daily_vol=vol_data["daily_vol"],
-    days_to_resolution=res_days,
-    fixed_probability=fixed_prob,
+    days_to_resolution=desk_days,
+    fixed_probability=desk_fixed_prob,
 )
 
-# ── HEADER ─────────────────────────────────────────────────────────────────
-state_colors = {
-    "BASELINE":"#4b5563","SHOCK_ACTIVE":"#fbbf24","BUILDING":"#34d399",
-    "SUSTAINED":"#10b981","CONTESTED":"#f87171","INSUFFICIENT_SIGNAL":"#6b7280"
-}
-sc = state_colors.get(out.state.value, "#9ca3af")
-vol_color = {"QUIET":"#34d399","ACTIVE":"#fbbf24","CRISIS":"#f87171"}.get(vol_data["regime"],"#9ca3af")
+state_color = STATE_COLORS.get(output.state.value, "#94a3b8")
 
-col_prob, col_info = st.columns([1, 2])
-
-with col_prob:
-    st.markdown(f"""
-    <div style="background:#0d1421;border:2px solid #f59e0b44;border-radius:16px;padding:32px;text-align:center;">
-      <div class="prob-mega">{p_display:.0%}</div>
-      <div style="color:#9ca3af;font-size:13px;margin:8px 0;">P(Event Resolves YES)</div>
-      <div><span class="state-pill state-{out.state.value}"
-           style="background:{sc}22;color:{sc};border:1px solid {sc}44;">
-        {out.state.value}
-      </span></div>
-      <div style="color:#6b7280;font-size:12px;margin-top:12px;">
-        Bayesian CI [{bayes_result['ci_5']:.1%}, {bayes_result['ci_95']:.1%}]
-      </div>
-      <div style="color:{vol_color};font-size:13px;margin-top:6px;font-weight:600;">
-        σ = {vol_data['daily_vol']:.1%}/day · {vol_data['regime']}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col_info:
-    st.markdown(f"**{ev_info['description']}**")
-    st.caption(ev_info['resolution'])
-
-    # Key metrics row
-    m1,m2,m3,m4,m5 = st.columns(5)
-    with m1: st.metric("Bayesian P", f"{p_bayes:.1%}", delta=f"{(p_bayes-oracle._prior)*100:+.1f}pp vs prior")
-    with m2: st.metric("Oracle P", f"{p:.1%}", delta=f"{(p-p_bayes)*100:+.1f}pp vs Bayes")
-    with m3: st.metric("Epistemic σ", f"{p_std:.1%}", help="Bootstrap uncertainty around Bayesian posterior")
-    with m4: st.metric("Ann. Vol", f"{vol_data['annual_vol']:.0%}", delta=vol_data['regime'])
-    with m5: st.metric("Signals", f"{bayes_result['n_signals']}", help="Qualifying independent signals")
-
-st.divider()
-
-# ── TABS ───────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📊 Oracle", "⚡ Greeks & Pricing", "📈 Vol Surface",
-    "🔗 Correlation", "📥 Ingest", "📰 Live Feed"
-])
-
-# ── TAB 1: Oracle ──────────────────────────────────────────────────────────
-with tab1:
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.markdown("#### Bayesian Signal Decomposition")
-        st.markdown(f"""
-        <div class="metric-card">
-          <div class="metric-val">{oracle._prior:.1%}</div>
-          <div class="metric-lbl">Prior P₀ = α·H + β·S + γ·M</div>
+left, right = st.columns([1, 2])
+with left:
+    st.markdown(
+        f"""
+        <div class="hero">
+          <div class="hero-prob">{display_probability:.0%}</div>
+          <div class="small" style="margin-top:8px;">Probability of YES resolution</div>
+          <div style="margin-top:12px;">
+            <span class="state-pill" style="background:{state_color}22;color:{state_color};border:1px solid {state_color}55;">
+              {output.state.value}
+            </span>
+          </div>
+          <div class="small" style="margin-top:12px;">
+            Bayesian CI [{bayes_result['ci_5']:.1%}, {bayes_result['ci_95']:.1%}]<br/>
+            Daily vol {vol_data['daily_vol']:.1%} | {vol_data['regime']}
+          </div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
-        if oracle._articles:
-            st.markdown("**Likelihood Ratios by Source**")
-            from oracle.bayesian_engine import likelihood_ratio
-            from oracle.temporal_filter import decay_factor, count_confirming_signals
+with right:
+    st.markdown(f"### {event_info['description']}")
+    st.caption(event_info["resolution"])
+    metrics = st.columns(5)
+    metrics[0].metric("Bayesian P", f"{bayes_result['posterior']:.1%}", delta=f"{(bayes_result['posterior'] - oracle._prior) * 100:+.1f}pp")
+    metrics[1].metric("Oracle P", f"{output.probability:.1%}", delta=f"{(output.probability - bayes_result['posterior']) * 100:+.1f}pp")
+    metrics[2].metric("Epistemic Sigma", f"{bayes_result['std']:.1%}")
+    metrics[3].metric("Annual Vol", f"{vol_data['annual_vol']:.0%}", delta=vol_data["regime"])
+    metrics[4].metric("Signals", f"{bayes_result['n_signals']}")
 
-            for art in sorted(oracle._articles, key=lambda a: abs(a.signed_impact), reverse=True)[:6]:
-                dt = max(0, (current_time - art.publication_time) / 86400)
-                nc = count_confirming_signals(art, oracle._articles, oracle.config.theta_ind, oracle.config.theta_imp)
-                d = decay_factor(dt, oracle.config.decay_rate_lambda, nc)
-                lr = likelihood_ratio(art, d)
-                lr_display = f"{lr:.2f}×"
-                bar_w = min(100, abs(lr-1) * 50)
-                bar_class = "lr-bar-pos" if lr >= 1 else "lr-bar-neg"
-                direction_icon = "🔴" if art.direction > 0 else ("🟢" if art.direction < 0 else "⚪")
-                st.markdown(f"""
-                <div style="margin-bottom:8px;">
-                  <div style="font-size:12px;color:#9ca3af;">{direction_icon} {art.source_name[:30]} · T{art.tier.value}</div>
-                  <div style="font-size:11px;color:#6b7280;">{art.headline[:60]}...</div>
-                  <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
-                    <div class="{bar_class}" style="width:{bar_w}%;"></div>
-                    <span style="color:#f59e0b;font-size:12px;font-weight:600;font-family:monospace;">{lr_display}</span>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
+tabs = st.tabs(
+    [
+        "Oracle",
+        "CAR Lab",
+        "Pricing",
+        "Vol Surface",
+        "Correlation",
+        "Portfolio",
+        "Ingest",
+        "Live Feed",
+    ]
+)
 
-    with c2:
-        st.markdown("#### Temporal Filter")
-        c2a, c2b = st.columns(2)
-        with c2a:
-            st.metric("Fast Shock F(t)", f"{out.fast_shock:+.3f}", help="Exponential decay, capped ±20%")
-        with c2b:
-            st.metric("Persistent P(t)", f"{out.persistent_signal:+.3f}", help="Threshold-gated, ±80%")
 
-        # Prior → Posterior waterfall
-        st.markdown("**Bayesian Update Path**")
-        waterfall_data = {
-            "Component": ["Prior", "Fast Shock", "Persistent", "Bayes Posterior"],
-            "Value": [oracle._prior, out.fast_shock, out.persistent_signal, p_bayes],
-            "Color": ["#60a5fa", "#fbbf24" if out.fast_shock > 0 else "#f87171",
-                     "#34d399" if out.persistent_signal > 0 else "#f87171", "#f59e0b"],
-        }
-        wf_df = pd.DataFrame(waterfall_data)
-        st.dataframe(wf_df[["Component","Value"]].assign(
-            Value=wf_df["Value"].apply(lambda x: f"{x:+.3f}")
-        ), hide_index=True, use_container_width=True)
+with tabs[0]:
+    col_a, col_b, col_c = st.columns([1.1, 1.0, 1.0])
 
-    with c3:
-        st.markdown("#### Oracle State Machine")
-        for state in OracleState:
-            is_active = state == out.state
-            color = state_colors.get(state.value, "#4b5563")
-            bg = f"{color}33" if is_active else "#111827"
-            border = color if is_active else "#1f2937"
-            st.markdown(f"""
-            <div style="background:{bg};border:1px solid {border};border-radius:8px;
-                 padding:8px 12px;margin-bottom:6px;">
-              <span style="color:{color};font-weight:{'700' if is_active else '400'};font-size:13px;">
-                {'▶ ' if is_active else '  '}{state.value}
-              </span>
-            </div>
-            """, unsafe_allow_html=True)
+    with col_a:
+        st.markdown("#### Signal decomposition")
+        st.metric("Prior", f"{oracle._prior:.1%}")
+        st.metric("Fast Shock", f"{output.fast_shock:+.3f}")
+        st.metric("Persistent Signal", f"{output.persistent_signal:+.3f}")
+        st.metric("Independent Sources", f"{output.independent_source_count}")
 
-    # History chart
-    history = get_history(selected_event)
+    with col_b:
+        st.markdown("#### Strongest articles")
+        ranked = sorted(oracle._articles, key=lambda item: abs(item.signed_impact), reverse=True)[:6]
+        if ranked:
+            for article in ranked:
+                age_days = max(0.0, (now - article.publication_time) / 86400)
+                confirmations = count_confirming_signals(article, oracle._articles, oracle.config.theta_ind, oracle.config.theta_imp)
+                decay = decay_factor(age_days, oracle.config.decay_rate_lambda, confirmations)
+                lr = likelihood_ratio(article, decay)
+                st.markdown(
+                    f"""
+                    <div class="panel" style="margin-bottom:8px;">
+                      <div style="font-size:13px;font-weight:600;">{article.source_name} | Tier {article.tier.value}</div>
+                      <div class="small">{article.headline[:90]}</div>
+                      <div class="small mono" style="margin-top:6px;">impact={article.signed_impact:+.2f} | lr={lr:.2f}x | ind={article.independence_score:.2f}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No articles ingested yet.")
+
+    with col_c:
+        st.markdown("#### Audit trail")
+        if output.audit_trail:
+            audit_df = pd.DataFrame(output.audit_trail)
+            st.dataframe(audit_df, hide_index=True, use_container_width=True)
+        else:
+            st.info("Audit trail will populate after qualifying articles are ingested.")
+
     if len(history) >= 2:
-        st.markdown("#### Probability History")
+        st.markdown("#### Probability history")
         hist_df = pd.DataFrame(history)
         hist_df["datetime"] = pd.to_datetime(hist_df["timestamp"], unit="s")
-        hist_df["P (%)"] = hist_df["probability"] * 100
-        hist_df["Prior"] = oracle._prior * 100
+        chart_df = hist_df.set_index("datetime")[["probability"]]
+        st.line_chart(chart_df, use_container_width=True, height=240)
 
-        chart_df = hist_df.set_index("datetime")[["P (%)", "Prior"]]
-        st.line_chart(chart_df, use_container_width=True, height=220, color=["#f59e0b", "#374151"])
 
-# ── TAB 2: Greeks & Pricing ───────────────────────────────────────────────
-with tab2:
-    st.markdown(f"### Event Probability Swap · Notional: ${notional_desk:,.0f} · K = {fixed_prob:.0%}")
+with tabs[1]:
+    presets = list_car_presets()
+    preset_key = next((item["key"] for item in presets if item["event_id"] == selected_event), presets[0]["key"])
+    chosen_key = st.selectbox(
+        "Case Study",
+        [item["key"] for item in presets],
+        index=[item["key"] for item in presets].index(preset_key),
+        format_func=lambda key: next(item["title"] for item in presets if item["key"] == key),
+    )
+    car_preset = get_car_preset(chosen_key)
 
-    g1, g2, g3, g4 = st.columns(4)
+    car_left, car_right = st.columns([1.3, 1.0])
+    with car_left:
+        question = st.text_input("Question", value=car_preset["question"])
+        use_oracle_probability = st.checkbox(
+            "Start from the current oracle probability",
+            value=(selected_event == car_preset["seed_event"]["event_id"]),
+        )
+        default_naive = display_probability if use_oracle_probability else car_preset["naive_probability"]
+        naive_probability = st.slider("Naive probability", 0.02, 0.98, float(default_naive), 0.01)
+        st.caption(car_preset["context"])
 
-    with g1:
-        st.markdown(f"""
-        <div class="greek-box">
-          <div class="greek-lbl">SWAP DELTA (∂V/∂P)</div>
-          <div class="greek-val">${greeks['swap_delta']:,.0f}</div>
-          <div class="greek-int">{greeks['interpretation']['swap_delta']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    actor_profiles = copy.deepcopy(car_preset["actors"])
+    with car_right:
+        tuned_actor_name = st.selectbox("Tune actor", [actor["actor"] for actor in actor_profiles])
+        tuned_actor = next(actor for actor in actor_profiles if actor["actor"] == tuned_actor_name)
+        tuned_actor["utility_yes"] = st.slider("Utility if YES", 0.0, 10.0, float(tuned_actor["utility_yes"]), 0.1)
+        tuned_actor["utility_no"] = st.slider("Utility if NO", 0.0, 10.0, float(tuned_actor["utility_no"]), 0.1)
+        tuned_actor["blocking_power"] = st.slider("Blocking power", 0.0, 1.0, float(tuned_actor["blocking_power"]), 0.01)
+        tuned_actor["structural_silence_score"] = st.slider(
+            "Structural silence",
+            0.0,
+            5.0,
+            float(tuned_actor.get("structural_silence_score", 0.0)),
+            0.01,
+        )
 
-    with g2:
-        st.markdown(f"""
-        <div class="greek-box">
-          <div class="greek-lbl">BINARY DELTA</div>
-          <div class="greek-val">{greeks['binary_delta']:,.1f}</div>
-          <div class="greek-int">Binary option sensitivity</div>
-        </div>
-        """, unsafe_allow_html=True)
+    car_result = run_deterministic_car(question, naive_probability, actor_profiles)
 
-    with g3:
-        st.markdown(f"""
-        <div class="greek-box">
-          <div class="greek-lbl">GAMMA (∂²V/∂P²)</div>
-          <div class="greek-val">{greeks['gamma']:.4f}</div>
-          <div class="greek-int">{greeks['interpretation']['gamma']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    car_metrics = st.columns(4)
+    car_metrics[0].metric("Naive P", f"{car_result['final']['p_naive']:.1%}")
+    car_metrics[1].metric("CAR P", f"{car_result['final']['p_car']:.1%}", delta=f"{(car_result['final']['p_car'] - car_result['final']['p_naive']) * 100:+.1f}pp")
+    car_metrics[2].metric("Haircut", f"{car_result['final']['adversarial_haircut']:.1%}")
+    car_metrics[3].metric("Equilibrium", car_result["final"]["equilibrium_type"])
 
-    with g4:
-        st.markdown(f"""
-        <div class="greek-box">
-          <div class="greek-lbl">THETA (daily decay)</div>
-          <div class="greek-val">${abs(greeks['theta_daily']):,.0f}</div>
-          <div class="greek-int">{greeks['interpretation']['theta']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    coalition_left, coalition_right = st.columns([1.1, 1.2])
+    with coalition_left:
+        actor_df = pd.DataFrame(car_result["actor_profiles"])[
+            ["actor", "actor_class", "utility_yes", "utility_no", "blocking_power", "structural_silence_score"]
+        ]
+        st.markdown("#### Actor map")
+        st.dataframe(actor_df, hide_index=True, use_container_width=True)
 
-    st.divider()
-    v1, v2, v3 = st.columns(3)
+    with coalition_right:
+        coalition_df = pd.DataFrame(
+            [
+                {
+                    "Coalition": "Blocking",
+                    "Actors": ", ".join(car_result["game_model"]["blocking_coalition"]["members"]) or "--",
+                    "Power": car_result["game_model"]["blocking_coalition"]["combined_blocking_power"],
+                },
+                {
+                    "Coalition": "Resolving",
+                    "Actors": ", ".join(car_result["game_model"]["resolving_coalition"]["members"]) or "--",
+                    "Power": car_result["game_model"]["resolving_coalition"]["combined_resolving_power"],
+                },
+            ]
+        )
+        st.markdown("#### Coalition balance")
+        st.dataframe(coalition_df, hide_index=True, use_container_width=True)
+        st.markdown(
+            f"""
+            <div class="panel">
+              <div style="font-size:13px;font-weight:600;">Dominant scenario</div>
+              <div style="margin-top:6px;">{car_result['final']['dominant_scenario']}</div>
+              <div class="small" style="margin-top:8px;">{car_result['game_model']['key_insight']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    with v1:
-        st.markdown(f"""
-        <div class="greek-box">
-          <div class="greek-lbl">VEGA (per 1% vol)</div>
-          <div class="greek-val">${abs(greeks['vega_per_1pct_vol']):,.0f}</div>
-          <div class="greek-int">{greeks['interpretation']['vega']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("#### Marginal drag")
+    st.dataframe(pd.DataFrame(car_result["marginal_impacts"]), hide_index=True, use_container_width=True)
 
-    with v2:
-        st.markdown(f"""
-        <div class="greek-box">
-          <div class="greek-lbl">BINARY OPTION PRICE</div>
-          <div class="greek-val">${greeks['binary_option_price']:,.0f}</div>
-          <div class="greek-int">Normal approx, K={fixed_prob:.0%}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    if st.button("Load this case as active event"):
+        create_event_from_preset(chosen_key)
+        st.success(f"Loaded {car_preset['title']} into the event book")
+        st.rerun()
 
-    with v3:
-        st.markdown(f"""
-        <div class="greek-box">
-          <div class="greek-lbl">d1 (Black-Scholes)</div>
-          <div class="greek-val">{greeks['d1']:.3f}</div>
-          <div class="greek-int">Standard deviations from strike</div>
-        </div>
-        """, unsafe_allow_html=True)
 
-    # P&L scenario table
-    st.markdown("#### P&L Scenarios")
-    scenarios = []
-    for p_scenario in [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]:
-        pnl_long = (p_scenario - p_display) * notional_desk
-        pnl_short = -pnl_long
-        scenarios.append({
-            "Oracle P": f"{p_scenario:.0%}",
-            "ΔP vs Now": f"{(p_scenario-p_display)*100:+.0f}pp",
-            "Long Float P&L": f"${pnl_long:+,.0f}",
-            "Short Float P&L": f"${pnl_short:+,.0f}",
-            "Margin Used": f"${abs(pnl_long):,.0f}",
-        })
+with tabs[2]:
+    st.markdown(f"### Event probability swap | Notional ${desk_notional:,.0f} | K = {desk_fixed_prob:.0%}")
+    greek_cols = st.columns(4)
+    greek_cols[0].metric("Swap Delta", f"${greeks['swap_delta']:,.0f}")
+    greek_cols[1].metric("Binary Delta", f"{greeks['binary_delta']:.1f}")
+    greek_cols[2].metric("Gamma", f"{greeks['gamma']:.4f}")
+    greek_cols[3].metric("Theta", f"${abs(greeks['theta_daily']):,.0f}")
 
-    pnl_df = pd.DataFrame(scenarios)
-    st.dataframe(pnl_df, hide_index=True, use_container_width=True)
+    vega_cols = st.columns(3)
+    vega_cols[0].metric("Vega / 1% vol", f"${abs(greeks['vega_per_1pct_vol']):,.0f}")
+    vega_cols[1].metric("Binary option price", f"${greeks['binary_option_price']:,.0f}")
+    vega_cols[2].metric("d1", f"{greeks['d1']:.3f}")
 
-# ── TAB 3: Vol Surface ─────────────────────────────────────────────────────
-with tab3:
-    st.markdown("### Probability Volatility Surface")
-    v1, v2, v3, v4 = st.columns(4)
-    with v1:
-        vc = {"QUIET":"#34d399","ACTIVE":"#fbbf24","CRISIS":"#f87171"}.get(vol_data["regime"])
-        st.markdown(f"""<div class="metric-card">
-        <div class="metric-val" style="color:{vc};">{vol_data['daily_vol']:.1%}</div>
-        <div class="metric-lbl">Daily Vol σ/day</div></div>""", unsafe_allow_html=True)
-    with v2:
-        st.markdown(f"""<div class="metric-card">
-        <div class="metric-val">{vol_data['annual_vol']:.0%}</div>
-        <div class="metric-lbl">Annual Vol σ/√252</div></div>""", unsafe_allow_html=True)
-    with v3:
-        r1d = vol_data["vol_1d_range"]
-        st.markdown(f"""<div class="metric-card">
-        <div class="metric-val" style="font-size:18px;">[{r1d[0]:.1%}, {r1d[1]:.1%}]</div>
-        <div class="metric-lbl">1-Day 90% Range</div></div>""", unsafe_allow_html=True)
-    with v4:
-        r7d = vol_data["vol_7d_range"]
-        st.markdown(f"""<div class="metric-card">
-        <div class="metric-val" style="font-size:18px;">[{r7d[0]:.1%}, {r7d[1]:.1%}]</div>
-        <div class="metric-lbl">7-Day 90% Range</div></div>""", unsafe_allow_html=True)
+    scenario_rows = []
+    for scenario_p in np.arange(0.10, 0.91, 0.10):
+        pnl = (scenario_p - display_probability) * desk_notional
+        scenario_rows.append(
+            {
+                "Scenario P": f"{scenario_p:.0%}",
+                "Delta vs now": f"{(scenario_p - display_probability) * 100:+.0f}pp",
+                "Long floating PnL": f"${pnl:+,.0f}",
+                "Short floating PnL": f"${-pnl:+,.0f}",
+            }
+        )
+    st.dataframe(pd.DataFrame(scenario_rows), hide_index=True, use_container_width=True)
 
-    st.divider()
 
-    # Vol smile across probability levels
-    st.markdown("#### Vol Smile — σ across P levels")
-    smile_data = []
-    for p_lvl in np.arange(0.05, 0.96, 0.05):
-        vd = compute_vol_surface(p_lvl, ev_info["category"], out.state,
-                                 res_days, bayes_result["n_signals"])
-        smile_data.append({"P": p_lvl, "Daily Vol": vd["daily_vol"], "Annual Vol": vd["annual_vol"]})
-    smile_df = pd.DataFrame(smile_data).set_index("P")
-    st.line_chart(smile_df["Annual Vol"], use_container_width=True, height=220, color="#f59e0b")
+with tabs[3]:
+    top = st.columns(4)
+    top[0].metric("Daily Vol", f"{vol_data['daily_vol']:.1%}")
+    top[1].metric("Annual Vol", f"{vol_data['annual_vol']:.0%}")
+    top[2].metric("1d range", f"[{vol_data['vol_1d_range'][0]:.1%}, {vol_data['vol_1d_range'][1]:.1%}]")
+    top[3].metric("7d range", f"[{vol_data['vol_7d_range'][0]:.1%}, {vol_data['vol_7d_range'][1]:.1%}]")
 
-    # Vol term structure
-    st.markdown("#### Vol Term Structure — σ by days to resolution")
-    term_data = []
-    for days in [1,3,7,14,30,60,90,180,365]:
-        vd = compute_vol_surface(p_display, ev_info["category"], out.state,
-                                 days, bayes_result["n_signals"])
-        term_data.append({"Days": days, "Daily Vol": vd["daily_vol"]})
-    term_df = pd.DataFrame(term_data).set_index("Days")
-    st.line_chart(term_df["Daily Vol"], use_container_width=True, height=200, color="#60a5fa")
+    smile_rows = []
+    for level in np.arange(0.05, 0.96, 0.05):
+        result = compute_vol_surface(level, event_info["category"], output.state, desk_days, bayes_result["n_signals"])
+        smile_rows.append({"P": level, "Annual Vol": result["annual_vol"]})
+    smile_df = pd.DataFrame(smile_rows).set_index("P")
+    st.markdown("#### Smile")
+    st.line_chart(smile_df, use_container_width=True, height=220)
 
-    st.divider()
-    st.markdown("#### Vol Surface Components")
-    comps = vol_data["components"]
-    comp_df = pd.DataFrame([
-        {"Component": "Base Vol (category)", "Multiplier": f"{comps['base_vol']:.3f}"},
-        {"Component": "Smile (level adj.)", "Multiplier": f"{comps['smile_multiplier']:.3f}×"},
-        {"Component": "State multiplier", "Multiplier": f"{comps['state_multiplier']}×"},
-        {"Component": "Term structure", "Multiplier": f"{comps['term_multiplier']}×"},
-        {"Component": "Signal density", "Multiplier": f"{comps['density_multiplier']}×"},
-        {"Component": "→ Final daily vol", "Multiplier": f"{vol_data['daily_vol']:.3f}"},
-    ])
-    st.dataframe(comp_df, hide_index=True, use_container_width=True)
+    term_rows = []
+    for days in [1, 3, 7, 14, 30, 60, 90, 180, 365]:
+        result = compute_vol_surface(display_probability, event_info["category"], output.state, days, bayes_result["n_signals"])
+        term_rows.append({"Days": days, "Daily Vol": result["daily_vol"]})
+    term_df = pd.DataFrame(term_rows).set_index("Days")
+    st.markdown("#### Term structure")
+    st.line_chart(term_df, use_container_width=True, height=220)
 
-# ── TAB 4: Correlation ─────────────────────────────────────────────────────
-with tab4:
-    st.markdown("### Cross-Event Correlation")
+    component_rows = [{"Component": key, "Value": value} for key, value in vol_data["components"].items()]
+    st.dataframe(pd.DataFrame(component_rows), hide_index=True, use_container_width=True)
+
+
+with tabs[4]:
     corr = st.session_state.correlation
+    for event_id in event_ids:
+        corr.add_event(event_id)
 
     if len(event_ids) < 2:
-        st.info("Create at least 2 events to see correlation analysis.")
+        st.info("Create at least two events to unlock cross-event correlation and shock propagation.")
     else:
-        # Ensure all events registered
-        for eid in event_ids:
-            corr.add_event(eid)
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            corr_a = st.selectbox("Event A", event_ids, key="corr_a")
+        with col_b:
+            corr_b = st.selectbox("Event B", event_ids, key="corr_b")
+        with col_c:
+            rho = st.slider("Correlation", -0.99, 0.99, 0.0, 0.01)
+        if st.button("Set correlation"):
+            corr.set_correlation(corr_a, corr_b, rho)
+            st.success(f"Set rho({corr_a}, {corr_b}) = {rho:.2f}")
 
-        # Custom correlation setter
-        st.markdown("#### Set Correlation")
-        c1, c2, c3 = st.columns(3)
-        with c1: ev_a = st.selectbox("Event A", event_ids, key="corr_a")
-        with c2: ev_b = st.selectbox("Event B", event_ids, key="corr_b")
-        with c3: rho = st.slider("ρ", -0.99, 0.99, 0.0, 0.01)
-        if st.button("Set Correlation"):
-            corr.set_correlation(ev_a, ev_b, rho)
-            st.success(f"ρ({ev_a}, {ev_b}) = {rho:.2f}")
+        corr_df = pd.DataFrame(corr._matrix, index=corr._events, columns=corr._events)
+        st.dataframe(corr_df.round(2), use_container_width=True)
 
-        # Correlation matrix display
-        if len(corr._events) >= 2:
-            st.markdown("#### Correlation Matrix")
-            corr_df = pd.DataFrame(
-                corr._matrix,
-                index=corr._events,
-                columns=corr._events
+        prob_map = current_probability_map(corr._events)
+        source_event = st.selectbox("Shock source", corr._events)
+        shock_pp = st.slider("Shock magnitude (pp)", -30, 30, 10)
+        shock_result = corr.propagate_shock(source_event, shock_pp / 100.0, prob_map)
+        shock_rows = []
+        for event_id, delta_p in shock_result.items():
+            base_p = prob_map.get(event_id, 0.5)
+            shock_rows.append(
+                {
+                    "Event": event_id,
+                    "Current P": f"{base_p:.1%}",
+                    "Implied Delta": f"{delta_p * 100:+.1f}pp",
+                    "New P": f"{min(0.98, max(0.02, base_p + delta_p)):.1%}",
+                }
             )
-            st.dataframe(corr_df.round(2), use_container_width=True)
+        st.dataframe(pd.DataFrame(shock_rows), hide_index=True, use_container_width=True)
 
-            # Shock propagation
-            st.markdown("#### Shock Propagation")
-            shock_source = st.selectbox("Source event", corr._events)
-            shock_size = st.slider("Shock magnitude (pp)", -30, 30, 10)
 
-            current_probs = {}
-            for eid in corr._events:
-                try:
-                    o = get_oracle(eid)
-                    out_tmp = o.compute()
-                    current_probs[eid] = out_tmp.probability
-                except: current_probs[eid] = 0.5
+with tabs[5]:
+    st.markdown("### Portfolio risk")
+    if event_ids:
+        with st.form("portfolio_add"):
+            col_a, col_b, col_c, col_d = st.columns(4)
+            with col_a:
+                portfolio_event = st.selectbox("Event", event_ids, key="portfolio_event")
+            with col_b:
+                direction = st.selectbox("Direction", ["Long floating", "Short floating"])
+            with col_c:
+                notional = st.number_input("Notional", 100000, 100000000, 1000000, 100000, key="portfolio_notional")
+            with col_d:
+                fixed_probability = st.slider("Fixed P", 0.02, 0.98, float(display_probability), 0.01, key="portfolio_fixed")
+            if st.form_submit_button("Add position", type="primary"):
+                position = PortfolioPosition(
+                    position_id=f"pos_{int(time.time())}",
+                    event_id=portfolio_event,
+                    notional=notional,
+                    fixed_probability=fixed_probability,
+                    long_floating=(direction == "Long floating"),
+                    label=f"{portfolio_event}:{direction}",
+                )
+                st.session_state.portfolio_positions.append(position)
+                st.success("Position added")
+                st.rerun()
 
-            propagated = corr.propagate_shock(shock_source, shock_size/100, current_probs)
-            prop_df = pd.DataFrame([
-                {"Event": k, "Current P": f"{current_probs.get(k,0.5):.1%}",
-                 "Implied ΔP": f"{v*100:+.1f}pp",
-                 "New P": f"{min(0.98,max(0.02,current_probs.get(k,0.5)+v)):.1%}"}
-                for k, v in propagated.items()
-            ])
-            st.dataframe(prop_df, hide_index=True, use_container_width=True)
+    action_cols = st.columns(3)
+    if action_cols[0].button("Run portfolio risk", use_container_width=True):
+        portfolio_events = list({position.event_id for position in st.session_state.portfolio_positions})
+        prob_map = current_probability_map(portfolio_events)
+        vol_map = current_daily_vols(portfolio_events, prob_map) if portfolio_events else {}
+        st.session_state.portfolio_result = analyze_portfolio_risk(
+            positions=st.session_state.portfolio_positions,
+            current_probabilities=prob_map,
+            daily_vols=vol_map,
+            correlation_matrix=st.session_state.correlation,
+            n_paths=5000,
+            n_days=30,
+        )
+    if action_cols[1].button("Remove last", use_container_width=True) and st.session_state.portfolio_positions:
+        st.session_state.portfolio_positions.pop()
+        st.session_state.portfolio_result = None
+        st.rerun()
+    if action_cols[2].button("Clear book", use_container_width=True):
+        st.session_state.portfolio_positions = []
+        st.session_state.portfolio_result = None
+        st.rerun()
 
-            # Monte Carlo joint simulation
-            if st.button("Run Monte Carlo (10,000 paths)", type="primary"):
-                daily_vols = {}
-                for eid in corr._events:
-                    try:
-                        o = get_oracle(eid)
-                        o_out = o.compute()
-                        vd = compute_vol_surface(current_probs[eid], get_event(eid)["category"], o_out.state)
-                        daily_vols[eid] = vd["daily_vol"]
-                    except: daily_vols[eid] = 0.08
+    if st.session_state.portfolio_positions:
+        summary = summarize_positions(st.session_state.portfolio_positions, current_probability_map(list({p.event_id for p in st.session_state.portfolio_positions})))
+        st.dataframe(pd.DataFrame(summary["positions"]), hide_index=True, use_container_width=True)
+        totals = summary["totals"]
+        total_cols = st.columns(3)
+        total_cols[0].metric("Current MTM", f"${totals['current_mtm']:,.0f}")
+        total_cols[1].metric("Gross notional", f"${totals['gross_notional']:,.0f}")
+        total_cols[2].metric("Posted margin", f"${totals['margin']:,.0f}")
 
-                with st.spinner("Simulating 10,000 correlated probability paths..."):
-                    mc_results = corr.joint_simulation(current_probs, daily_vols, n_paths=10000, n_days=30)
+    if st.session_state.portfolio_result and st.session_state.portfolio_result["risk"]:
+        risk = st.session_state.portfolio_result["risk"]
+        risk_cols = st.columns(4)
+        risk_cols[0].metric("VaR 95%", f"${risk['var_95']:,.0f}")
+        risk_cols[1].metric("ES 95%", f"${risk['expected_shortfall_95']:,.0f}")
+        risk_cols[2].metric("Worst case", f"${risk['worst_case']:,.0f}")
+        risk_cols[3].metric("Best case", f"${risk['best_case']:,.0f}")
 
-                mc_df = pd.DataFrame([
-                    {"Event": eid, "Mean": f"{r['mean']:.1%}", "Std": f"{r['std']:.1%}",
-                     "P5": f"{r['p5']:.1%}", "P25": f"{r['p25']:.1%}",
-                     "Median": f"{r['p50']:.1%}", "P75": f"{r['p75']:.1%}", "P95": f"{r['p95']:.1%}"}
-                    for eid, r in mc_results.items()
-                ])
-                st.dataframe(mc_df, hide_index=True, use_container_width=True)
+        hist_df = pd.DataFrame(st.session_state.portfolio_result["histogram"])
+        if not hist_df.empty:
+            hist_df["bucket"] = hist_df.apply(lambda row: f"{row['bin_start']:.0f} to {row['bin_end']:.0f}", axis=1)
+            st.bar_chart(hist_df.set_index("bucket")["count"], use_container_width=True, height=220)
 
-# ── TAB 5: Ingest ──────────────────────────────────────────────────────────
-with tab5:
-    st.markdown("### Manual Article Ingestion")
-    with st.form("ingest_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            art_id   = st.text_input("Article ID", value=f"art_{int(time.time())}")
-            source   = st.text_input("Source Name")
-            tier     = st.selectbox("Tier", [1,2,3,4,5,6], index=3,
-                         format_func=lambda x:{1:"T1 — Court/Regulatory",2:"T2 — Local Press",
-                         3:"T3 — Regional Intl",4:"T4 — Wire (Bloomberg/Reuters)",
-                         5:"T5 — Capital Flow Signal",6:"T6 — Unverified"}[x])
-            pub_date = st.date_input("Date", value=date.today())
-            url      = st.text_input("URL")
-        with c2:
-            impact   = st.slider("Raw Impact", 1.0, 10.0, 5.0, 0.5)
-            direction= st.radio("Direction",
-                        [1,0,-1], format_func=lambda x:{1:"🔴 +1 Increases P",0:"⚪ 0 Neutral",-1:"🟢 -1 Decreases P"}[x])
-            headline = st.text_input("Headline *")
-            content  = st.text_area("Content Summary", height=80)
-            reasoning= st.text_input("Reasoning")
+        st.markdown("#### Tail contributors")
+        st.dataframe(pd.DataFrame(st.session_state.portfolio_result["tail_contributors"]), hide_index=True, use_container_width=True)
 
-        if st.form_submit_button("⬡ Ingest", type="primary"):
-            if source and headline:
-                pub_time = datetime.combine(pub_date, datetime.min.time()).timestamp()
-                article = create_article_from_dict({
-                    "article_id": art_id, "source_name": source, "tier": tier,
-                    "publication_time": pub_time, "headline": headline,
-                    "content_summary": content, "url": url,
-                    "raw_impact": impact, "direction": direction, "reasoning_chain": reasoning,
-                })
+
+with tabs[6]:
+    st.markdown("### Manual article ingestion")
+    with st.form("manual_ingest"):
+        left, right = st.columns(2)
+        with left:
+            article_id = st.text_input("Article ID", value=f"art_{int(time.time())}")
+            source_name = st.text_input("Source Name")
+            tier = st.selectbox("Tier", [1, 2, 3, 4, 5, 6], index=3)
+            publication_date = st.date_input("Date", value=date.today())
+            url = st.text_input("URL")
+        with right:
+            impact = st.slider("Raw Impact", 1.0, 10.0, 5.0, 0.5)
+            direction = st.radio("Direction", [1, 0, -1], format_func=lambda value: {1: "+1 increases", 0: "0 neutral", -1: "-1 decreases"}[value])
+            headline = st.text_input("Headline")
+            content = st.text_area("Content Summary", height=90)
+            reasoning = st.text_input("Reasoning")
+
+        if st.form_submit_button("Ingest", type="primary"):
+            if source_name and headline:
+                article = create_article_from_dict(
+                    {
+                        "article_id": article_id,
+                        "source_name": source_name,
+                        "tier": tier,
+                        "publication_time": datetime.combine(publication_date, datetime.min.time()).timestamp(),
+                        "headline": headline,
+                        "content_summary": content,
+                        "url": url,
+                        "raw_impact": impact,
+                        "direction": direction,
+                        "reasoning_chain": reasoning,
+                    }
+                )
                 oracle.ingest_articles([article], auto_score_independence=True)
                 save_article(selected_event, oracle._articles[-1])
-
-                out_new = oracle.compute()
-                save_history_snapshot(selected_event, {
-                    "timestamp": time.time(), "probability": round(out_new.probability,4),
-                    "state": out_new.state.value, "fast_shock": round(out_new.fast_shock,4),
-                    "persistent_signal": round(out_new.persistent_signal,4),
-                    "independent_sources": out_new.independent_source_count,
-                })
-                inde = oracle._articles[-1].independence_score
-                st.success(f"✓ ι={inde:.3f} · New P = {out_new.probability:.1%} [{out_new.state.value}]")
+                new_output = oracle.compute()
+                save_snapshot(selected_event, new_output)
+                st.success(f"Ingested article. New P = {new_output.probability:.1%}")
                 st.rerun()
             else:
-                st.error("Source and headline required")
+                st.error("Source name and headline are required.")
 
-# ── TAB 6: Live Feed ───────────────────────────────────────────────────────
-with tab6:
-    st.markdown("### Live Article Feed — GDELT + NewsAPI + GNews")
 
-    ev_info2 = get_event(selected_event)
-    default_query = build_query_from_event(ev_info2["description"])
+with tabs[7]:
+    st.markdown("### Live article feed")
+    default_query = build_query_from_event(event_info["description"])
     query = st.text_input("Search query", value=default_query)
-    c1, c2, c3 = st.columns(3)
-    with c1: hours_back = st.selectbox("Time window", [6,12,24,48,72], index=2)
-    with c2: max_per = st.selectbox("Max per source", [5,10,15,20], index=1)
-    with c3: st.markdown("<br>", unsafe_allow_html=True)
-             
-    if st.button("🔍 Fetch Live Articles", type="primary"):
-        with st.spinner(f"Querying: {query}..."):
-            articles = live_ingest(query, hours_back=hours_back, max_per_source=max_per)
-            st.session_state.live_articles[selected_event] = articles
+    col_a, col_b = st.columns(2)
+    with col_a:
+        hours_back = st.selectbox("Time window", [6, 12, 24, 48, 72], index=2)
+    with col_b:
+        max_per_source = st.selectbox("Max per source", [5, 10, 15, 20], index=1)
 
-    live_arts = st.session_state.live_articles.get(selected_event, [])
-    if live_arts:
-        st.markdown(f"**{len(live_arts)} articles found** — Review and ingest:")
-        for i, art in enumerate(live_arts):
-            tier_colors = {1:"#f59e0b",2:"#34d399",3:"#60a5fa",4:"#9ca3af",5:"#a78bfa",6:"#6b7280"}
-            tc = tier_colors.get(art.tier.value,"#9ca3af")
-            with st.expander(f"T{art.tier.value} · {art.source_name} · {art.headline[:80]}"):
-                st.markdown(f"**URL:** {art.url}")
-                st.markdown(f"**Published:** {datetime.fromtimestamp(art.publication_time).strftime('%Y-%m-%d %H:%M')}")
-                c1,c2,c3 = st.columns(3)
-                with c1: impact_sel = st.slider("Impact", 1.0, 10.0, 5.0, 0.5, key=f"imp_{i}")
-                with c2: dir_sel = st.radio("Direction", [1,0,-1],
-                           format_func=lambda x:{1:"+1",0:"0",-1:"-1"}[x], key=f"dir_{i}")
-                with c3: st.markdown(f"<br><span style='color:{tc}'>Tier {art.tier.value}</span>", unsafe_allow_html=True)
+    if st.button("Fetch live articles", type="primary"):
+        with st.spinner(f"Querying {query}"):
+            st.session_state.live_articles[selected_event] = live_ingest(query, hours_back=hours_back, max_per_source=max_per_source)
 
-                if st.button(f"⬡ Ingest this article", key=f"ingest_{i}"):
-                    art.raw_impact = impact_sel
-                    art.direction = dir_sel
-                    oracle.ingest_articles([art], auto_score_independence=True)
+    live_articles = st.session_state.live_articles.get(selected_event, [])
+    if live_articles:
+        st.markdown(f"**{len(live_articles)} articles found**")
+        for index, article in enumerate(live_articles):
+            with st.expander(f"Tier {article.tier.value} | {article.source_name} | {article.headline[:90]}"):
+                st.write(article.url)
+                st.write(datetime.fromtimestamp(article.publication_time).strftime("%Y-%m-%d %H:%M"))
+                adj_left, adj_right = st.columns(2)
+                with adj_left:
+                    impact = st.slider("Impact", 1.0, 10.0, 5.0, 0.5, key=f"live_impact_{index}")
+                with adj_right:
+                    direction = st.radio("Direction", [1, 0, -1], format_func=lambda value: {1: "+1", 0: "0", -1: "-1"}[value], key=f"live_direction_{index}")
+
+                if st.button("Ingest article", key=f"live_ingest_{index}"):
+                    article.raw_impact = impact
+                    article.direction = direction
+                    oracle.ingest_articles([article], auto_score_independence=True)
                     save_article(selected_event, oracle._articles[-1])
-                    out_new = oracle.compute()
-                    save_history_snapshot(selected_event, {
-                        "timestamp": time.time(), "probability": round(out_new.probability,4),
-                        "state": out_new.state.value, "fast_shock": round(out_new.fast_shock,4),
-                        "persistent_signal": round(out_new.persistent_signal,4),
-                        "independent_sources": out_new.independent_source_count,
-                    })
-                    st.success(f"✓ Ingested · New P = {out_new.probability:.1%}")
+                    new_output = oracle.compute()
+                    save_snapshot(selected_event, new_output)
+                    st.success(f"Ingested. New P = {new_output.probability:.1%}")
                     st.rerun()
     else:
-        st.info("Click 'Fetch Live Articles' to pull from GDELT (free, no key needed) and NewsAPI/GNews (if keys set in Advanced settings).")
+        st.info("Fetch articles to review them here before ingesting.")
 
-# ── Footer ─────────────────────────────────────────────────────────────────
+
 st.divider()
-st.markdown("""
-<div style="text-align:center;color:#374151;font-size:12px;">
-World-as-Oracle v2.0 · Bayesian Engine · Vol Surface · Greeks · Correlation · Live Feed<br>
-Guruprasad Venkatakrishnan (2026) · Verslan · predictmarkets.finance · verslan.xyz
-</div>
-""", unsafe_allow_html=True)
+st.caption("World-as-Oracle advanced workbench | Bayesian engine | deterministic CAR | portfolio risk")

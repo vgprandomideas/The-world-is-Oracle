@@ -15,6 +15,11 @@ from pydantic import BaseModel
 from oracle import WorldOracle, EventCategory
 from oracle.models import SourceTier, Article
 from oracle.impact_scorer import create_article_from_dict
+from oracle.car_presets import get_car_preset, list_car_presets
+from oracle.deterministic_car import run_deterministic_car
+from oracle.portfolio import PortfolioPosition, analyze_portfolio_risk
+from oracle.vol_surface import compute_vol_surface
+from oracle.correlation import CorrelationMatrix
 from db import (init_db, save_event, get_event, get_all_events,
                 save_article, get_articles, save_history_snapshot,
                 get_history, save_resolution, event_exists)
@@ -113,6 +118,43 @@ class ArticleRequest(BaseModel):
 
 class ResolveRequest(BaseModel):
     outcome: int
+
+
+class CARActorRequest(BaseModel):
+    actor: str
+    actor_class: Optional[str] = None
+    utility_yes: float = 5.0
+    utility_no: float = 5.0
+    blocking_power: float = 0.5
+    structural_silence_score: Optional[float] = None
+    structural_contradiction: str = ""
+    collapse_trigger: str = ""
+    one_line_summary: str = ""
+
+
+class CARAnalysisRequest(BaseModel):
+    question: Optional[str] = None
+    naive_probability: Optional[float] = None
+    preset_key: Optional[str] = None
+    actor_profiles: Optional[List[CARActorRequest]] = None
+
+
+class PortfolioPositionRequest(BaseModel):
+    position_id: str
+    event_id: str
+    notional: float
+    fixed_probability: float
+    long_floating: bool = True
+    label: str = ""
+
+
+class PortfolioAnalysisRequest(BaseModel):
+    positions: List[PortfolioPositionRequest]
+    days: int = 30
+    paths: int = 5000
+    current_probabilities: Optional[dict] = None
+    daily_vols: Optional[dict] = None
+    correlations: Optional[List[dict]] = None
 
 
 # ── API Routes ─────────────────────────────────────────────────────────────
@@ -249,6 +291,94 @@ def resolve_event(event_id: str, req: ResolveRequest):
                     report.get("overall_brier_score"))
     return {"event_id": event_id, "outcome": req.outcome,
             "brier_score": report["overall_brier_score"], "calibration": report}
+
+
+@app.get("/car/presets")
+def car_presets():
+    return {"presets": list_car_presets()}
+
+
+@app.post("/car/analyze")
+def analyze_car(req: CARAnalysisRequest):
+    preset = get_car_preset(req.preset_key) if req.preset_key else None
+
+    question = req.question or (preset["question"] if preset else None)
+    if not question:
+        raise HTTPException(400, "question or preset_key is required")
+
+    naive_probability = req.naive_probability
+    if naive_probability is None:
+        naive_probability = preset["naive_probability"] if preset else None
+    if naive_probability is None:
+        raise HTTPException(400, "naive_probability or preset_key is required")
+
+    if req.actor_profiles:
+        actor_profiles = [actor.model_dump() for actor in req.actor_profiles]
+    elif preset:
+        actor_profiles = preset["actors"]
+    else:
+        raise HTTPException(400, "actor_profiles or preset_key is required")
+
+    result = run_deterministic_car(question, naive_probability, actor_profiles)
+    return result
+
+
+@app.post("/portfolio/analyze")
+def analyze_portfolio(req: PortfolioAnalysisRequest):
+    positions = [
+        PortfolioPosition(
+            position_id=position.position_id,
+            event_id=position.event_id,
+            notional=position.notional,
+            fixed_probability=position.fixed_probability,
+            long_floating=position.long_floating,
+            label=position.label,
+        )
+        for position in req.positions
+    ]
+
+    current_probabilities = dict(req.current_probabilities or {})
+    daily_vols = dict(req.daily_vols or {})
+
+    corr = CorrelationMatrix()
+    for position in positions:
+        corr.add_event(position.event_id)
+        if position.event_id not in current_probabilities and event_exists(position.event_id):
+            oracle = get_oracle(position.event_id)
+            current_probabilities[position.event_id] = oracle.compute().probability
+
+    for event_id in corr._events:
+        if event_id not in current_probabilities:
+            current_probabilities[event_id] = 0.5
+        if event_id not in daily_vols:
+            if event_exists(event_id):
+                oracle = get_oracle(event_id)
+                outcome = oracle.compute()
+                event = get_event(event_id)
+                daily_vols[event_id] = compute_vol_surface(
+                    p=current_probabilities[event_id],
+                    category=event["category"],
+                    state=outcome.state,
+                    n_signals_24h=len(oracle._articles),
+                )["daily_vol"]
+            else:
+                daily_vols[event_id] = 0.08
+
+    for relation in req.correlations or []:
+        event_a = relation.get("event_a")
+        event_b = relation.get("event_b")
+        rho = relation.get("rho")
+        if event_a and event_b and rho is not None:
+            corr.set_correlation(event_a, event_b, float(rho))
+
+    return analyze_portfolio_risk(
+        positions=positions,
+        current_probabilities=current_probabilities,
+        daily_vols=daily_vols,
+        correlation_matrix=corr,
+        n_paths=req.paths,
+        n_days=req.days,
+    )
 
 
 # ── Frontend ───────────────────────────────────────────────────────────────
