@@ -1,0 +1,43 @@
+{
+  "name": "Houthis",
+  "last_updated": "2026-05-24",
+  "class": "vendetta_architect",
+  "utility_yes": 3.0,
+  "utility_no": 7.0,
+  "obstruction_incentive": 4.0,
+  "blocking_power": 0.7,
+  "vendetta_score": 5.99,
+  "martyrdom_acceptance": 0.95,
+  "buyout_probability": 0.05,
+  "structural_silence_score": 2.1,
+  "q1_economic": "Yemen \u2014 one of world's poorest. GDP per capita ~$600. Economically irrelevant \u2014 which is why economic pressure fails.",
+  "q2_psychological": "Revenge for 10 years of Yemen war 2015-2025. Saudi bombing, blockade, cholera, starvation.",
+  "q7_vendetta": "Historical grievance 9.5/10. Generational. Pre-existing before Iran war. Will outlast any Iran-US deal.",
+  "q8_collapse_trigger": "Yemen peace settlement addressing root grievances. Currently no party is working on this.",
+  "principal_agreement_sufficient": false,
+  "verified_actions": [
+    {
+      "date": "2023-11-19",
+      "type": "military",
+      "action": "IMO documents first Houthi attacks on Red Sea commercial shipping",
+      "source": "IMO"
+    },
+    {
+      "date": "2024-01-04",
+      "type": "military",
+      "action": "Forces Maersk full Red Sea suspension",
+      "source": "Maersk official"
+    },
+    {
+      "date": "2026-03-01",
+      "type": "military",
+      "action": "Resumes Red Sea attacks simultaneously with Hormuz closure",
+      "source": "IMO/Stars and Stripes"
+    }
+  ],
+  "sources": [
+    "IMO incident reports",
+    "Stars and Stripes 2026",
+    "CNBC 2026"
+  ]
+}

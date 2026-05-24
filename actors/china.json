@@ -1,0 +1,47 @@
+{
+  "name": "China",
+  "last_updated": "2026-05-24",
+  "class": "fence_sitter",
+  "utility_yes": 6.5,
+  "utility_no": 6.0,
+  "obstruction_incentive": 0.0,
+  "blocking_power": 0.85,
+  "fence_sitter_score": 0.72,
+  "ambiguity_score": 0.9,
+  "presence_in_signal_chain": 0.5,
+  "blocking_mechanisms": [
+    "veto_power",
+    "resource_control",
+    "financial_flow"
+  ],
+  "q1_economic": "World's 2nd largest economy. 25% crude imports from Gulf. Already has non-hostile access to Hormuz.",
+  "q2_psychological": "National rejuvenation. Multi-alignment strategic ambiguity as core doctrine.",
+  "q4_multi_party": "Sells to both US (trade) and Iran (oil via non-hostile). Invoked blocking rule against US sanctions.",
+  "q6_sovereignty": "High \u2014 0.90",
+  "q9_india_equivalent": "United States \u2014 hegemonic status comparator",
+  "verified_actions": [
+    {
+      "date": "2026-03-01",
+      "type": "vote",
+      "action": "Co-vetoed UN SC Hormuz resolution with Russia",
+      "source": "UN records"
+    },
+    {
+      "date": "2026-05-01",
+      "type": "economic",
+      "action": "Ships broadcasting CHINA OWNER transiting via non-hostile framework",
+      "source": "AP/MarineTraffic"
+    },
+    {
+      "date": "2026-04-28",
+      "type": "diplomatic",
+      "action": "Wang Yi tells Iran to open Hormuz while blocking UN mechanism",
+      "source": "CNBC/SCMP 2026"
+    }
+  ],
+  "sources": [
+    "CNBC 2026",
+    "South China Morning Post 2026",
+    "AP 2026"
+  ]
+}

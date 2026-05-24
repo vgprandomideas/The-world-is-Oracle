@@ -1,0 +1,55 @@
+{
+  "name": "Pakistan",
+  "last_updated": "2026-05-24",
+  "class": "nuclear_rentier",
+  "utility_yes": 4.5,
+  "utility_no": 5.5,
+  "obstruction_incentive": 1.0,
+  "blocking_power": 0.72,
+  "structural_silence_score": 0.35,
+  "nuclear_rentier_score": 0.69,
+  "q1_economic": "GDP $410B. 24 IMF bailouts since 1958. $131B external debt. Moody's Caa2. Per capita $1,710 (162nd).",
+  "q2_psychological": "Inferiority complex vs India (11x GDP gap from same 1947 start). Nuclear weapon as self-esteem.",
+  "q4_multi_party": "Saudi nuclear shield (SMDA Sep 2025) + Iran trusted backchannel simultaneously. Structural contradiction.",
+  "q8_collapse_trigger": "Iran discovers full Saudi nuclear pact. All three businesses collapse simultaneously.",
+  "q9_india_equivalent": "India. Blocks India-led solutions in all forums regardless of whether Pakistan benefits.",
+  "collapse_probability_12m": 0.2,
+  "verified_actions": [
+    {
+      "date": "2025-09-17",
+      "type": "treaty",
+      "action": "Signs Strategic Mutual Defence Agreement with Saudi Arabia \u2014 nuclear umbrella implied",
+      "source": "Saudi Press Agency"
+    },
+    {
+      "date": "2026-04-11",
+      "type": "diplomatic",
+      "action": "Hosts Islamabad Talks \u2014 21 hours, zero deal",
+      "source": "Wikipedia/Al Jazeera"
+    },
+    {
+      "date": "2026-04-11",
+      "type": "military",
+      "action": "Deploys fighter jets to King Abdulaziz Air Base same day as Islamabad Talks",
+      "source": "Fortune/Saudi MoD"
+    },
+    {
+      "date": "2026-05-07",
+      "type": "diplomatic",
+      "action": "Military says 'chosen by God to protect Two Holy Mosques'",
+      "source": "Arab News"
+    },
+    {
+      "date": "2026-05-18",
+      "type": "statement",
+      "action": "India confirms buying Russian crude regardless \u2014 Pakistan loses ability to claim India alignment",
+      "source": "Business Standard"
+    }
+  ],
+  "sources": [
+    "Al Jazeera 2026",
+    "Fortune 2026",
+    "Arab News 2026",
+    "IMF records"
+  ]
+}

@@ -1,180 +1,170 @@
-# World-as-Oracle
+# ⬡ World-as-Oracle
 
 **Adversarial-Resistant AI Probability Estimation for Event-Driven Financial Instruments**
 
-> *"The world is the oracle. Events speak for themselves — if you know how to listen across the right time horizon with the right source verification."*
+> *"The world is the oracle. Events speak for themselves — if you know how to listen across the right time horizon with the right source verification. And if you know which actors benefit from you listening to the wrong things."*
 
-**Paper:** Guruprasad Venkatakrishnan (2026) — *The World as Oracle: Adversarial-Resistant AI Probability Estimation for Event-Driven Financial Instruments*
+**Paper 1:** Venkatakrishnan (2026a). *The World as Oracle: Adversarial-Resistant AI Probability Estimation for Event-Driven Financial Instruments*
+
+**Paper 2:** Venkatakrishnan (2026b). *Counterfactual Adversarial Reasoning (CAR): A Training Framework for Incentive-Aware Language Models*
 
 **Affiliation:** Verslan | [predictmarkets.finance](https://predictmarkets.finance) | [verslan.xyz](https://verslan.xyz)
+
+**Live App:** [the-world-is-oracle.streamlit.app](https://the-world-is-oracle.streamlit.app)
 
 ---
 
 ## What This Is
 
-A Python implementation of the 7-layer oracle architecture described in the paper. The oracle estimates the probability of real-world binary events (regulatory actions, court outcomes, central bank decisions, geopolitical developments) by reading the world's information flows directly — rather than aggregating market prices or expert opinions.
+Two things in one repository:
 
-The core mechanism is **temporal persistence filtering**: distinguishing genuine sustained information flows from manufactured narrative bursts.
+**1. A 7-layer probability oracle** that resists information manipulation — the temporal persistence filter prevents manufactured narrative bursts from dominating probability estimates.
 
-## Architecture
+**2. CAR — Counterfactual Adversarial Reasoning** — the first formal framework for detecting actors who benefit from being invisible to the oracle. The oracle tells you the probability. CAR tells you who is gaming it.
 
-```
-Layer 1 — Data Ingestion        Continuous multi-source ingestion (6 tiers)
-Layer 2 — Event Detection       Independence scoring: ι(a_i) = 1 - max sim(a_i, a_j)
-Layer 3 — Impact Scoring        LLM chain-of-thought: magnitude + direction
-Layer 4 — Temporal Filter       Fast shock (20%, exponential decay) + Persistent signal (80%, threshold-gated)
-Layer 5 — Probability Engine    P_raw = P₀ + F(t) + P(t) → Platt scaling → [0.02, 0.98]
-Layer 6 — Calibration           Platt scaling + isotonic regression + Brier score tracking
-Layer 7 — Oracle Output         Probability + CI + state flag + full audit trail
-```
+---
 
-## The Temporal Persistence Filter (Section 3)
+## The CAR Framework — Eight Actor Classes
 
-```
-Fast Shock:  F(t) = min( Σ sᵢ · δ(t, tᵢ), F_max )
-             δ(t, tᵢ) = exp( -λ · Δt · (1 - γc · min(nc, 1)) )
+| Class | Example | Detection | Oracle Effect |
+|---|---|---|---|
+| Obstructor | Russia on Hormuz | Structural Silence Score | P discount (AH) |
+| Dual-Class | Russia (also Extractor) | OI + Duration Payoff | AH + Duration Bias |
+| Fence Sitter | China on Hormuz | FSS = BP × indifference × ambiguity | CI inflation |
+| Achieved-Goal Extractor | Israel on Hormuz | Revealed objectives vs stated threat | Near-zero weight |
+| Captured State | Qatar on Hormuz | Sovereignty Quotient < 0.20 | Mediator signals = noise |
+| Credibility-Depleted Resolver | USA on Hormuz | Caused the crisis they propose to solve | Tier 1 × 0.40 |
+| Nuclear Rentier | Pakistan on Hormuz | Multi-party incompatible sales | Duration bias + collapse risk |
+| Vendetta Architect | Houthis on Hormuz | VS = grievance × infiltration × martyrdom | Ceasefire-proof discount |
 
-Persistent:  P(t) = 0                               if ρ(t) < ρ_min
-             P(t) = min( Σ sᵢ · ω(t - tᵢ), P_max ) if ρ(t) ≥ ρ_min
+---
 
-Composition: P_raw = P₀(E) + F(t) + P(t)
-             P_oracle = σ( a · logit(clamp(P_raw)) + b )  constrained to [0.02, 0.98]
-```
+## The Nine Adversarial Questions
 
-## Oracle States
+Before any probability estimate, CAR fires nine questions:
 
-| State | Condition |
-|-------|-----------|
-| `BASELINE` | ρ(t) < ρ_min AND F(t) < 0.05 |
-| `SHOCK_ACTIVE` | F(t) ≥ 0.05 AND ρ(t) < ρ_min |
-| `BUILDING` | ρ(t) ≥ ρ_min AND P(t) < 0.40 |
-| `SUSTAINED` | P(t) ≥ 0.40 for ≥ 14 days |
-| `CONTESTED` | \|P_oracle - P_tier1\| > 0.30 for ≥ 3 days |
+1. What is this actor's economic reality?
+2. What is their psychological driver — envy, revenge, survival, pride?
+3. **Who benefits from NO, and are they in the signal chain?**
+4. How many parties are they selling to simultaneously?
+5. Is this actor internally fractured?
+6. Do they physically control their own strategic choices?
+7. Do they have a generational grievance overriding material incentives?
+8. What collapses their strategy?
+9. Who is their India — the comparator they block from succeeding?
 
-`CONTESTED` is the paper's distinctive contribution: when primary source evidence and media narrative diverge significantly, the oracle surfaces information warfare risk rather than forcing a probability output.
+Standard AI asks none of these. A CAR-trained model asks all nine before outputting any number.
 
-## Installation
+---
 
-```bash
-git clone https://github.com/guruprasad-venkatakrishnan/world-as-oracle.git
-cd world-as-oracle
-pip install -r requirements.txt
-export ANTHROPIC_API_KEY=your_key_here
-```
+## Validated Results
+
+| Event | Naive P | Adversarial Haircut | P_CAR | Outcome |
+|---|---|---|---|---|
+| Hormuz normalisation 2027 | 52% | 45% (Russia SS=4.52) | 15% | Unresolved — Stable Disruption |
+| Adani US conviction 2026 | 72% | 45% (GQG $1.87B long) | 40% | NO — charges dismissed May 2026 |
+| Fed rate Jun 2023 | 52% | **0%** (no obstructors) | 52% | HOLD — zero haircut correct |
+
+The Fed case is as important as the Hormuz case. CAR discriminates — it does not uniformly discount.
+
+---
 
 ## Quick Start
 
-```python
-from oracle import WorldOracle, Article, SourceTier, EventCategory
-from oracle.impact_scorer import create_article_from_dict
-
-# Create oracle for a regulatory event
-oracle = WorldOracle(
-    event_id="fed_rate_jun2023",
-    event_description="Federal Reserve raises rates at June 14, 2023 FOMC",
-    resolution_criteria="Fed funds rate increases by 25bps or more",
-    category=EventCategory.CENTRAL_BANK,
-)
-
-# Set prior: P₀ = α·H(E) + β·S(E) + γ·M(E)
-oracle.set_prior(
-    historical_base_rate=0.65,
-    structural_prior=0.60,
-    market_implied_prior=0.72,
-)
-
-# Ingest articles (pre-scored or auto-scored via Claude)
-articles = [
-    create_article_from_dict({
-        "article_id": "fomc_minutes",
-        "source_name": "Federal Reserve — FOMC Minutes",
-        "tier": 1,
-        "publication_time": 1684886400.0,
-        "headline": "Several FOMC members see case for pausing",
-        "content_summary": "Minutes show internal debate about pausing hikes",
-        "raw_impact": 7,
-        "direction": -1,
-    })
-]
-oracle.ingest_articles(articles, auto_score_independence=True)
-
-# Compute
-import time
-output = oracle.compute(current_time=time.time())
-print(output)
-# Oracle [BUILDING] P=0.523 CI=[0.412, 0.634] Sources=1 (prior=0.623 + shock=-0.087 + persistent=-0.013)
-```
-
-## Running the Examples
-
 ```bash
-# Adani Group 40-month retrospective (Section 5.3)
-python examples/adani_retrospective.py
-
-# Federal Reserve consistency check (Section 5.4)
-python examples/fed_rate_decision.py
+git clone https://github.com/vgprandomideas/The-world-is-Oracle
+cd The-world-is-Oracle
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-## Running the Tests
-
+**Run the Hormuz demo:**
 ```bash
-python -m pytest tests/ -v
+python examples/maersk_hormuz.py
 ```
 
-Expected output: All 16 tests pass.
-
-## Source Tiers and Credibility Multipliers
-
-| Tier | Source Type | c(τ) |
-|------|-------------|-------|
-| 1 | Court filings, regulatory orders, central bank statements | 1.00 |
-| 2 | Local financial press (Economic Times, Business Standard) | 0.90 |
-| 3 | Regional international press (Nikkei Asia, FT) | 0.75 |
-| 4 | International wire (Reuters, Bloomberg) | 0.55 |
-| 5 | Capital flow signals (FII positions, CDS spreads, bond yields) | **1.50** |
-| 6 | Unverified single-source, social media | 0.10 |
-
-Tier 5 receives `c(τ) > 1.0` because real capital deployment is a stronger epistemic signal than stated opinion. GQG Partners investing $1.87B in Adani is worth more than any number of editorial endorsements.
-
-## Event Probability Swap Integration
-
-The oracle output serves as the floating rate for event probability swaps:
-
+**Run the full CAR pipeline:**
 ```python
-from oracle.models import SwapContract
-from oracle.mtm import SwapLedger, initial_margin_schedule
+from oracle.car_pipeline import run_car_pipeline
+import oracle.car_game_theory as gt
+gt.construct_payoff_matrix = gt.construct_payoff_matrix_deterministic
 
-swap = SwapContract(
-    contract_id="swap_001",
-    event_id="fed_rate_jun2023",
-    notional=1_000_000,
-    fixed_probability=0.52,
+result = run_car_pipeline(
+    question="Will Hormuz reopen by December 2027?",
+    known_actors=["Russia", "China", "Pakistan", "Houthis"],
+    p_naive=0.52,
+    use_prebuilt_profiles=True,
+    verbose=True,
 )
-
-# Deterministic Margin Model (Venkatakrishnan, 2025)
-# Total margin = (P_max - P_min) × N = 0.96 × N regardless of P_fixed
-margin = initial_margin_schedule(swap.fixed_probability, swap.notional)
-# {'fixed_payer_initial_margin': 500000.0, 'floating_payer_initial_margin': 460000.0, ...}
-
-ledger = SwapLedger(swap)
-record = ledger.process_oracle_output(oracle_output)
-settlement = ledger.settle(outcome=0)
 ```
 
-## Key Parameters
+---
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `F_max` | 0.20 | Fast shock ceiling — single event cannot dominate |
-| `P_max` | 0.80 | Persistent signal ceiling |
-| `ρ_min` | 3 | Minimum independent sources for persistence gate |
-| `θ_ind` | 0.40 | Independence threshold |
-| `θ_imp` | 3.00 | Impact threshold |
-| `γ_c` | 0.95 | Confirmation dampening — decay arrested on confirmation |
-| `λ` (central bank) | 0.40/day | Fast shock decay rate |
-| `W` (central bank) | 14 days | Persistence window |
+## Training Dataset — 10,003 Examples
 
-All parameters are documented in Section 3 of the paper and configurable via `oracle/config.py`.
+The CAR training dataset is in `training_data/`:
+
+| File | Examples | Purpose |
+|---|---|---|
+| `car_dataset_train.jsonl` | 8,002 | DPO fine-tuning |
+| `car_dataset_val.jsonl` | 1,000 | Validation / early stopping |
+| `car_dataset_test.jsonl` | 1,001 | Final evaluation |
+
+Each example: `(prompt, naive_response[REJECTED], car_response[PREFERRED])`
+
+**Fine-tune your own CAR model:**
+```bash
+pip install transformers trl peft bitsandbytes accelerate datasets
+python scripts/finetune_dpo.py
+python scripts/evaluate_car.py car-llama-3.1-8b
+```
+
+Target: **Adversarial Spontaneity Rate > 80%** — model asks Q3 without being prompted.
+
+---
+
+## Repository Structure
+
+```
+oracle/
+  models.py            Article, OracleOutput, SwapContract
+  config.py            Event category configs (λ, W, F_max)
+  independence.py      ι(a_i) = 1 - max sim — citation amplification detection
+  temporal_filter.py   F(t) fast shock + P(t) persistent signal
+  probability.py       Platt scaling, Brier score, confidence interval
+  state_machine.py     BASELINE/SHOCK/BUILDING/SUSTAINED/CONTESTED
+  mtm.py               Daily VM, DMM initial margin, swap settlement
+  oracle.py            WorldOracle — full 7-layer pipeline
+  car.py               CAR framework — 8 classes, formal definitions
+  car_actor_profiler.py  9 CAR questions, behavioural fingerprints
+  car_game_theory.py   Payoff matrix, Nash equilibrium detection
+  car_pipeline.py      Full 5-stage automated pipeline
+  car_dataset_generator.py  10,003 example generator
+
+actors/
+  russia.json          Verified action history, SS=4.52
+  china.json           FSS=0.72, fence sitter profile
+  pakistan.json        Nuclear rentier, structural contradiction
+  houthis.json         VS=5.99, vendetta architect
+  india.json           Fractured — 3 sub-actors
+
+training_data/
+  car_dataset_train.jsonl   8,002 training examples
+  car_dataset_val.jsonl     1,000 validation examples
+  car_dataset_test.jsonl    1,001 test examples
+  car_dataset_stats.json    Full statistics
+
+scripts/
+  finetune_dpo.py      DPO fine-tuning on Llama 3.1 8B
+  evaluate_car.py      Adversarial Spontaneity Rate evaluation
+
+examples/
+  adani_retrospective.py   Paper Section 5.3
+  fed_rate_decision.py     Paper Section 5.4
+  maersk_hormuz.py         Paper Section 5.6
+```
+
+---
 
 ## Citation
 
@@ -182,12 +172,22 @@ All parameters are documented in Section 3 of the paper and configurable via `or
 @article{guruprasad2026oracle,
   title={The World as Oracle: Adversarial-Resistant AI Probability Estimation for Event-Driven Financial Instruments},
   author={Guruprasad Venkatakrishnan},
-  institution={Verslan / predictmarkets.finance},
+  institution={Verslan},
   year={2026},
-  note={Working Paper}
+  note={Working Paper. github.com/vgprandomideas/The-world-is-Oracle}
+}
+
+@article{guruprasad2026car,
+  title={Counterfactual Adversarial Reasoning (CAR): A Training Framework for Incentive-Aware Language Models},
+  author={Guruprasad Venkatakrishnan},
+  institution={Verslan},
+  year={2026},
+  note={Working Paper. github.com/vgprandomideas/The-world-is-Oracle}
 }
 ```
 
+---
+
 ## License
 
-MIT License — Verslan Private Limited, 2026.
+MIT License — Verslan Private Limited, 2026

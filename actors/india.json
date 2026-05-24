@@ -1,0 +1,59 @@
+{
+  "name": "India",
+  "last_updated": "2026-05-24",
+  "class": "fractured",
+  "is_fractured": true,
+  "sub_actors": [
+    {
+      "name": "Reliance_Industries",
+      "class": "genuine_resolver",
+      "utility_yes": 8.0,
+      "utility_no": 3.0,
+      "note": "Complies with US sanctions Day 1. Halted Rosneft Nov 2025."
+    },
+    {
+      "name": "State_Refiners",
+      "class": "fence_sitter",
+      "utility_yes": 7.0,
+      "utility_no": 6.0,
+      "note": "Follows government direction. Absorbs Reliance gap."
+    },
+    {
+      "name": "Government_of_India",
+      "class": "genuine_resolver",
+      "utility_yes": 7.5,
+      "utility_no": 6.0,
+      "note": "Before waiver, during waiver, now also. May 18 2026."
+    }
+  ],
+  "fracture_divergence": 0.1,
+  "dominant_sub_actor": "Government_of_India",
+  "proven_bilateral_pathway": true,
+  "pathway_note": "Jaishankar bilateral diplomacy got Indian ships through \u2014 real operational result",
+  "split_state_problem": "Private sector US-aligned, government Russia-buying. Reduces Iran trust in India as neutral.",
+  "verified_actions": [
+    {
+      "date": "2025-11-01",
+      "type": "economic",
+      "action": "Reliance halts all Rosneft purchases \u2014 complies with US sanctions",
+      "source": "Reuters"
+    },
+    {
+      "date": "2026-05-18",
+      "type": "statement",
+      "action": "Petroleum Ministry: buying Russian crude before/during/after waiver regardless",
+      "source": "Business Standard"
+    },
+    {
+      "date": "2026-05-05",
+      "type": "diplomatic",
+      "action": "Jaishankar gets Indian vessels through Hormuz via bilateral diplomacy",
+      "source": "CNBC"
+    }
+  ],
+  "sources": [
+    "Business Standard 2026",
+    "CNBC 2026",
+    "Reuters 2025"
+  ]
+}

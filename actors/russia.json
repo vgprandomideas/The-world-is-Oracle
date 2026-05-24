@@ -1,0 +1,52 @@
+{
+  "name": "Russia",
+  "last_updated": "2026-05-24",
+  "class": "obstructor",
+  "dual_class": "extractor",
+  "utility_yes": 3.0,
+  "utility_no": 9.5,
+  "obstruction_incentive": 6.5,
+  "blocking_power": 0.85,
+  "structural_silence_score": 4.52,
+  "presence_in_signal_chain": 0.08,
+  "blocking_mechanisms": [
+    "veto_power",
+    "resource_control",
+    "proxy_influence",
+    "info_control"
+  ],
+  "duration_bias": 0.15,
+  "extraction_rate": 0.65,
+  "q1_economic": "World's 11th largest economy. Oil/gas revenues fund state. Ukraine war costs ~$300B/year. Hormuz closure adds $150M/day.",
+  "q2_psychological": "Civilisational pride. Restoration of great power status after 1991 humiliation.",
+  "q3_benefits_no": "Earns $150M/day from Hormuz closure. Oil price: $44 to $100. Ukraine war funded.",
+  "q4_multi_party": "None \u2014 consistent alignment",
+  "q7_vendetta": "None at current threshold",
+  "q8_collapse_trigger": "Ukraine war resolution \u2014 removes financial need for Hormuz windfall",
+  "q9_india_equivalent": "United States \u2014 global power status comparator",
+  "verified_actions": [
+    {
+      "date": "2026-03-01",
+      "type": "vote",
+      "action": "Co-vetoed UN SC resolution on Hormuz with China",
+      "source": "UN records"
+    },
+    {
+      "date": "2026-02-28",
+      "type": "economic",
+      "action": "Russian oil price rose from $44 to $100 on Hormuz closure",
+      "source": "Kpler 2026"
+    },
+    {
+      "date": "2026-03-15",
+      "type": "economic",
+      "action": "Russia earns $150M/day extra from elevated oil prices",
+      "source": "Washington Institute 2026"
+    }
+  ],
+  "sources": [
+    "Kpler 2026",
+    "Washington Institute 2026",
+    "UK Parliament briefing 2026"
+  ]
+}
