@@ -10,7 +10,7 @@
 
 **Affiliation:** Verslan | [predictmarkets.finance](https://predictmarkets.finance) | [verslan.xyz](https://verslan.xyz)
 
-**Live App:** [the-world-is-oracle.streamlit.app](https://the-world-is-oracle.streamlit.app)
+**Live App:** [the-world-is-oracle.streamlit.app](https://theworldisoracle.streamlit.app)
 
 ---
 
