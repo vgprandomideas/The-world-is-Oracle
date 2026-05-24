@@ -1,0 +1,48 @@
+{
+  "total": 10003,
+  "by_category": {
+    "territorial_dispute": 500,
+    "nuclear_proliferation": 500,
+    "trade_war": 500,
+    "civil_war": 500,
+    "sanctions_regime": 500,
+    "election_integrity": 500,
+    "sovereign_debt": 500,
+    "energy_embargo": 500,
+    "treaty_ratification": 500,
+    "military_alliance": 500,
+    "currency_crisis": 500,
+    "maritime_dispute": 500,
+    "regime_change": 500,
+    "ceasefire_negotiation": 500,
+    "arms_control": 500,
+    "climate_agreement": 500,
+    "technology_ban": 500,
+    "refugee_crisis": 500,
+    "terrorist_designation": 500,
+    "diplomatic_recognition": 500
+  },
+  "by_equilibrium": {
+    "STABLE_DISRUPTION": 7435,
+    "RESOLUTION_POSSIBLE": 2376,
+    "MANAGED_DISRUPTION": 93,
+    "DEADLOCK": 87,
+    "VOLATILE_UNKNOWN": 9
+  },
+  "by_class": {
+    "genuine_resolver": 8776,
+    "obstructor": 8777,
+    "vendetta_architect": 3555,
+    "credibility_depleted_resolver": 3580,
+    "fence_sitter": 6418,
+    "achieved_goal_extractor": 3226,
+    "nuclear_rentier": 2002,
+    "wounded_opportunist": 2387,
+    "captured_state": 1182
+  },
+  "zero_haircut_count": 1978,
+  "obstructed_count": 8022,
+  "avg_delta": 0.167,
+  "avg_haircut": 0.333,
+  "zero_haircut_pct": 19.8
+}
